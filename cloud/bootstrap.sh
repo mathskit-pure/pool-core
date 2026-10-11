@@ -26,9 +26,9 @@ log "解释器：$($PY -V 2>&1)  系统：$(uname -s) $(uname -m)"
 if has_stage deps; then
   log "--- [deps] Python 依赖"
   pip_install --upgrade pip
-  # afgi_tdx 自带 requirements.txt；其余工程依赖 pandas/numpy，没有声明文件
-  pip_install pandas numpy
-  [[ -f "$AFGI_DIR/requirements.txt" ]] || mkdir -p "$WS"
+  # afgi_tdx 自带 requirements.txt（pandas/numpy/pytdx）；其余工程依赖同样的三件套
+  # 却没有声明文件，所以这里直接装，避免等仓库克隆完才发现缺包
+  pip_install pandas numpy pytdx
   log "--- [deps] 完成"
 fi
 
