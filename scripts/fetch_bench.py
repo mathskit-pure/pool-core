@@ -6,10 +6,11 @@ import os
 from datetime import date
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import DATA, WESTOCK as EXE  # noqa: E402  路径：本机 Windows 与云端 Linux 通用
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-EXE = r"C:\Users\12066\.local\bin\westock.exe"
-BASE = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
-OUT = os.path.join(BASE, "data", "bench_all.csv")
+OUT = os.path.join(DATA, "bench_all.csv")
 
 BENCH = {"沪深300": "sh000300", "创业板50": "sz399673", "科创50": "sh000688"}
 START = "2019-01-01"

@@ -20,10 +20,11 @@ import sys
 import time
 from datetime import date
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import BASE, WESTOCK as EXE, DATA  # noqa: E402  路径：本机 Windows 与云端 Linux 通用
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-EXE = r"C:\Users\12066\.local\bin\westock.exe"
-BASE = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
-OUT = os.path.join(BASE, "data", "prices_full_v2.csv")
+OUT = os.path.join(DATA, "prices_full_v2.csv")
 PROG = os.path.join(BASE, "data", "price_v2_progress.json")
 START = "2019-01-01"
 END = date.today().strftime("%Y-%m-%d")
