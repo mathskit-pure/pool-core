@@ -1,0 +1,16 @@
+# 大体积数据一律不入库，云端首次运行自行重建：
+#   prices_full_v2.csv  由 westock kline 增量重建
+#   page_base.html      由云端从线上页面节点 iB8I58mCTooLicPQ0Kyq0M 拉取
+#   nav.csv / holdings  由 mom_opt rebuild.py 确定性重算
+# 例外：pools.json 是季度股池成员名单，重建需全量财报，代价过高，故随代码入库。
+data/*
+!data/pools.json
+
+output/
+.workbuddy/
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+.idea/
+.vscode/
