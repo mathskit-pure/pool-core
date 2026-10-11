@@ -41,12 +41,14 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 
-ROOT = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
-AFGI_ROOT = r"C:\Users\12066\WorkBuddy\2026-10-05-14-50-58\afgi_tdx"
+# 路径统一由 paths.py 解析（本机 Windows 与云端 Linux 通用，支持环境变量覆盖）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import BASE as ROOT, AFGI_DIR as AFGI_ROOT  # noqa: E402
 
 AFGI_FILE = os.path.join(AFGI_ROOT, "output", "afgi_timeseries.csv")
 NAV_FILE = os.path.join(ROOT, "data", "nav.csv")

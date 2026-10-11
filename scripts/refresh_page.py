@@ -48,10 +48,10 @@ import pandas as pd
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-ROOT = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
-DATA = os.path.join(ROOT, "data")
-SCRIPTS = os.path.join(ROOT, "scripts")
+# 路径统一由 paths.py 解析（本机 Windows 与云端 Linux 通用，支持环境变量覆盖）
+SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS)
+from paths import BASE as ROOT, DATA, PROF_DIR  # noqa: E402
 
 import afgi_pos as AP  # noqa: E402
 
@@ -66,7 +66,7 @@ QUAL_RM_FILE = os.path.join(DATA, "quality_removed.csv")
 
 # 盈利能力 Top40 组合由另一个项目（work/prof）产出，本地 nav.csv 不含该列；
 # 这里直接读它的净值文件，供全量重算与日常延伸使用（文件缺失则退化为冻结）。
-PROF_NAV_FILE = r"C:\Users\12066\WorkBuddy\2026-10-07-14-39-28\work\prof\prof_nav.csv"
+PROF_NAV_FILE = os.path.join(PROF_DIR, "prof", "prof_nav.csv")
 EXTRA_NAV = {"盈利能力Top40": PROF_NAV_FILE}
 
 N_SHOW_MOM = 8          # 4.1 展示期数，与线上保持一致（版本57 起为最近 8 个调仓日）

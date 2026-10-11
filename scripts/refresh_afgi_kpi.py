@@ -39,14 +39,11 @@ import pandas as pd
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-BASE = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
-SCRIPTS = os.path.join(BASE, "scripts")
-DATA = os.path.join(BASE, "data")
+# 路径统一由 paths.py 解析（本机 Windows 与云端 Linux 通用，支持环境变量覆盖）
+SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS)
+from paths import BASE, DATA, PY, library_skill  # noqa: E402
 
-PY = r"C:\Users\12066\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
-SKILL = (r"C:\Users\12066\AppData\Local\Programs\WorkBuddy\resources\app.asar.unpacked"
-         r"\resources\plugins\workbuddy-builtin\skills\library")
 PAGE_NODE = "iB8I58mCTooLicPQ0Kyq0M"        # 资料库页面节点（覆写目标）
 
 import refresh_page as RP  # noqa: E402
@@ -68,7 +65,7 @@ def run(cmd, timeout=1800):
 
 def pull_live_page(out_dir):
     """拉取线上最新版页面，返回入口 HTML 的本地路径。"""
-    out = run([PY, os.path.join(SKILL, "page", "download_page_artifacts.py"),
+    out = run([PY, str(library_skill() / "page" / "download_page_artifacts.py"),
                "--node-id", PAGE_NODE, "--out-dir", out_dir])
     line = [l for l in out.splitlines() if "KS_ARTIFACTS_OK" in l]
     if not line:
@@ -114,7 +111,7 @@ def main():
             return 0
 
         log("=== 上传资料库 ===")
-        out = run([PY, os.path.join(SKILL, "page", "import_html.py"), out_html,
+        out = run([PY, str(library_skill() / "page" / "import_html.py"), out_html,
                    "--node-block-id", PAGE_NODE])
         line = [l for l in out.splitlines() if "KS_IMPORT_OK" in l]
         if not line:
