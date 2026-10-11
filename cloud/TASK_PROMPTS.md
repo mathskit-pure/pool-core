@@ -104,7 +104,7 @@ https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 即可。
 
 退出码 1：按脚本打印的告警逐条用简体中文说明（哪条数据落后、落后几个交易日、股池缺哪个
 报告期），并给出修复动作 ——
-· 「AFGI 落后」：在 /workspace/afgi_tdx 补跑 run.py，并把报告覆写到固定节点 3ezinMuQRXc9M8TpQsOJgF；
+· 「AFGI 落后」：在 /workspace/afgi_tdx 补跑 run.py，并把报告覆写到固定节点 ddbJ1onUkhBUybcqWTrwG5；
 · 「主刷新落后」：补跑 GIT_PULL=1 bash /workspace/pool-core/cloud/daily.sh；
 · 「PROF 落后 ≥2 个交易日」：在 /workspace/prof-model 依次补跑 sync_prices.py、
   catchup.py、prof_score.py、backtest_prof.py、update_prof_data.py --page-only、sync_page_base.py；
