@@ -24,6 +24,17 @@ PDATA_DIR="$WS/pool-data"
 GITHUB_USER="${GITHUB_USER:-mathskit-pure}"
 PAGE_NODE="iB8I58mCTooLicPQ0Kyq0M"
 
+# 把布局显式导出给 Python 侧（各工程 scripts/paths.py 会优先读这些环境变量）。
+# 目的：Python 不再依赖"兄弟目录名推断"。万一云端目录名与仓库名不一致
+# （例如手工下载 zip 得到 pool-core-main），推断会全盘错位，而环境变量始终正确。
+export POOL_BASE="$POOL_DIR"
+export PROF_DIR="$PROF_DIR"
+export MOM_OPT_DIR="$MOM_DIR"
+export POOL_DATA_DIR="$PDATA_DIR"
+export AFGI_DIR="$AFGI_DIR"
+# 未显式指定时不导出，留给 paths.py 按候选路径探测（与 AFGI cloud/publish.py 同一套候选）
+[[ -n "${WB_LIBRARY_SKILL:-}" ]] && export WB_LIBRARY_SKILL
+
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '[%s] !! %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 die()  { printf '[%s] !! %s\n' "$(date '+%H:%M:%S')" "$*" >&2; exit "${2:-1}"; }
