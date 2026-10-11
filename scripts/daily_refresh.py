@@ -50,11 +50,10 @@ import pandas as pd
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-BASE = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
-PY = r"C:\Users\12066\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
-EXE = r"C:\Users\12066\.local\bin\westock.exe"
-SKILL = (r"C:\Users\12066\AppData\Local\Programs\WorkBuddy\resources\app.asar.unpacked"
-         r"\resources\plugins\workbuddy-builtin\skills\library")
+# 路径与环境差异统一交给 scripts/paths.py：本机 Windows 与云端 Linux 共用一份代码，
+# 可用 POOL_BASE / MOM_OPT_DIR / WESTOCK_BIN / WB_LIBRARY_SKILL 等环境变量整体改写。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from paths import BASE, PY, WESTOCK as EXE, MOM_OPT, library_skill  # noqa: E402
 
 DATA = os.path.join(BASE, "data")
 PRICE_FILE = os.path.join(DATA, "prices_full_v2.csv")
@@ -76,7 +75,6 @@ START = "2019-05-06"
 # 重算脚本：不再用 scripts/backtest.py（那是已废止的旧口径，会把已发布的
 # N15/K10/L50 结果整段回退）。新口径引擎在 mom_opt/scripts/engine.py，
 # 入口 rebuild.py 一并产出 nav / holdings / removed / backtest_summary。
-MOM_OPT = r"C:\Users\12066\WorkBuddy\2026-10-09-23-54-07\mom_opt"
 REBUILD = os.path.join(MOM_OPT, "scripts", "rebuild.py")
 FETCH_OHLC = os.path.join(MOM_OPT, "scripts", "fetch_ohlc.py")
 BATCH = 4      # 增量区间通常只有 1~5 天，响应很小，可以放大批次（长区间不可用）
@@ -415,7 +413,7 @@ def main():
         return
 
     log("\n=== 上传资料库 ===")
-    out = run([PY, os.path.join(SKILL, "page", "import_html.py"), PAGE_HTML,
+    out = run([PY, str(library_skill() / "page" / "import_html.py"), PAGE_HTML,
                "--node-block-id", PAGE_NODE], timeout=1800)
     line = [l for l in out.splitlines() if "KS_IMPORT_OK" in l]
     if not line:
