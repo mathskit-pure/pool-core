@@ -56,4 +56,9 @@ $PY backtest_prof.py          || { warn "backtest_prof 失败"; exit 11; }
 $PY update_prof_data.py --page-only || { warn "update_prof_data --page-only 失败"; exit 11; }
 $PY sync_page_base.py         || { warn "sync_page_base 失败（模板未回写，明日主刷新会用旧模板）"; exit 11; }
 
+# ------------------------------------------------------------------ 发布
+log "=== [3/3] 统一发布：把三个固定页面重新发布为外部网页（解冻冻结快照，保证网页端同步）==="
+( cd "$POOL_DIR" && $PY cloud/publish_pages.py ) \
+  || warn "页面发布失败（不影响已入库数据；可重跑 cloud/publish_pages.py 或手动发布）"
+
 log "===== 每日整链结束（成功）====="
