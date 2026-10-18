@@ -439,6 +439,92 @@ def build_series(bt, start_date=None, full=False):
     return dates, out, factor
 
 
+# ── 1b) v3 版式（2026-10-18 起）：CSFM/TSFM + 四、仓位建议 + 质量Top28 v2 ────
+# v3 页面有 7 条曲线，其中 因子动量CSFM / 因子动量TSFM / B-score组合 由别的链路
+# （fmf 因子动量、b-score 择时）维护，本脚本无权改写；它只负责自己产出的
+# 「质量Top28组合」。所以 v3 分支不做「以本地日期为准」的整体重建 ——
+# 否则 nav.csv 比模板短时会把别人的曲线尾部截断。只做：
+#   · 在模板已有日期上就地覆盖质量Top28 的净值（定基都是 1.0，口径一致）
+#   · 重写统计表 r2 行、5.3 持仓表、KPI 里的持仓只数
+V3_SIGNS = ('id="posChart"', "四、CSFM 和 TSFM 历史仓位建议")
+V3_LOCAL_KEYS = ("质量Top28组合",)
+QUAL_STAT_ROW = 2                 # 统计表里质量Top28 的行号（r2_*）
+QUAL_ANCHOR_V3 = r"5\.3[\s\u3000]*质量Top28组合"
+QUAL_NEXT_V3 = r"5\.4[\s\u3000]"
+
+
+def detect_layout(html):
+    """v3 = 含仓位建议模块的新版式；否则按旧的 v2（动量轮动）处理。"""
+    return "v3" if all(s in html for s in V3_SIGNS) else "v2"
+
+
+def nav_series(col, page_start=PAGE_START):
+    """nav.csv 某列 → 定基 1.0 的 Series（键 YYYY-MM-DD）。"""
+    if not os.path.exists(NAV_FILE):
+        return None
+    nav = pd.read_csv(NAV_FILE, index_col=0)
+    nav.index = pd.to_datetime(nav.index).strftime("%Y-%m-%d")
+    nav = nav.loc[nav.index >= page_start].astype(float).sort_index()
+    if col not in nav.columns or nav.empty:
+        return None
+    s = nav[col].dropna()
+    if s.empty:
+        return None
+    return s / float(s.iloc[0])
+
+
+def refresh_series_v3(bt):
+    """只覆盖质量Top28 的净值；日期轴与其它 6 条曲线一律保持模板原样。"""
+    dates = list(bt["dates"])
+    series = {k: list(v) for k, v in bt["series"].items()}
+    pos = {d: i for i, d in enumerate(dates)}
+    for key in V3_LOCAL_KEYS:
+        if key not in series:
+            log("  ! 模板无 %s 曲线，跳过" % key)
+            continue
+        s = nav_series(LOCAL_COLS.get(key, key))
+        if s is None:
+            log("  ! %s 无本地净值列，保持模板值" % key)
+            continue
+        n = 0
+        for d, v in s.items():
+            i = pos.get(d)
+            if i is None:
+                continue
+            series[key][i] = round(float(v), 6)
+            n += 1
+        newer = [d for d in dates if d > s.index[-1]]
+        log("  · %s 覆盖 %d 日（本地最新 %s；模板比之新 %d 日保持原值）"
+            % (key, n, s.index[-1], len(newer)))
+    return dates, series
+
+
+def set_qual_stat_v3(html, series):
+    """统计表 r2_* 用 backtest_summary 的质量Top28 行（与其它行同口径、同批次）。"""
+    vals = None
+    path = os.path.join(DATA, "backtest_summary.csv")
+    if os.path.exists(path):
+        df = pd.read_csv(path, encoding="utf-8-sig")
+        hit = df[df["组合"].astype(str).str.strip() == "质量Top28组合"]
+        if not hit.empty:
+            r = hit.iloc[0]
+            vals = [float(r[c]) for c in ("累计收益", "年化收益", "年化波动",
+                                          "最大回撤", "夏普比率", "卡玛比率")]
+    if vals is None:
+        arr = series.get("质量Top28组合")
+        rng = stat_range(arr) if arr else None
+        if rng is None:
+            log("  ! 质量Top28 无统计来源，r2 行保持原值")
+            return html
+        vals = calc(arr, rng[0], rng[1])
+        log("  · 无 backtest_summary，r2 行改用净值序列现算")
+    for ci in range(6):
+        html = set_by_id(html, "r%d_%d" % (QUAL_STAT_ROW, ci), fmt_cell(ci, vals[ci]))
+    log("  ✓ 统计表 r%d 行（质量Top28）← %s"
+        % (QUAL_STAT_ROW, " / ".join(fmt_cell(i, vals[i]) for i in range(6))))
+    return html
+
+
 # ── 2) 区间统计（与页面 JS calc() 严格一致）──────────────────────────
 def calc(arr, k, j):
     import math
@@ -707,14 +793,20 @@ def build_qual_rows():
     return "".join(rows)
 
 
-def rebuild_qual_section(html):
-    """重建 4.2 质量 Top28 整段（标题 / 说明 / 图例 / 表头 / 表体）。"""
-    a = html.find("4.2　质量Top28组合")
-    if a < 0:
-        raise RuntimeError("未找到 4.2 质量Top28组合 锚点")
-    b = html.find("4.3　盈利能力Top40")
-    if b < 0 or b <= a:
-        raise RuntimeError("未定位 4.2 → 4.3 区间")
+def rebuild_qual_section(html, anchor_re=r"4\.2[\s\u3000]*质量Top28组合",
+                         next_re=r"4\.3[\s\u3000]*盈利能力Top40"):
+    """重建质量 Top28 整段（标题 / 说明 / 图例 / 表头 / 表体）。
+
+    anchor_re / next_re 默认是 v2 版式（4.2 → 4.3）；v3 版式传 5.3 → 5.4。
+    """
+    m = re.search(anchor_re, html)
+    if not m:
+        raise RuntimeError("未找到质量Top28 小节锚点：%s" % anchor_re)
+    a = m.start()
+    m2 = re.search(next_re, html[a + 1:])
+    if not m2:
+        raise RuntimeError("未定位质量Top28 之后的下一小节：%s" % next_re)
+    b = a + 1 + m2.start()
     seg = html[a:b]
     _h = pd.read_csv(QUAL_FILE, dtype={"代码": str})
     _n = int((_h["调仓日"] == _h["调仓日"].max()).sum())
@@ -751,7 +843,7 @@ def rebuild_qual_section(html):
                       "本期剔除（较上期卖出 · 建仓日 / 累计涨跌幅）")
     c0, c1 = inner_span(seg, r"<tbody[^>]*>")
     seg = seg[:c0] + build_qual_rows() + seg[c1:]
-    log("  ✓ 4.2 质量Top28 持仓表已重建（%d 期）" % build_qual_rows().count("<tr>"))
+    log("  ✓ 质量Top28 持仓表已重建（%d 期）" % build_qual_rows().count("<tr>"))
     return html[:a] + seg + html[b:]
 
 
@@ -798,8 +890,18 @@ def inject_css(html):
     return html
 
 
-# ── 布局：把最下方「五、如何更新最新一季股池」收回 .wrap 容器 ──────────
-WRAP_ANCHOR = "五、如何更新最新一季股池"
+# ── 布局：把最下方「五/六、如何更新最新一季股池」收回 .wrap 容器 ──────────
+# v2 版式是「五、」，v3（2026-10-18 起）多了「四、仓位建议」，该节顺延为「六、」。
+WRAP_ANCHORS = ("五、如何更新最新一季股池", "六、如何更新最新一季股池")
+WRAP_ANCHOR = WRAP_ANCHORS[0]     # 向后兼容（旧调用/自检）
+
+
+def find_wrap_anchor(html):
+    for t in WRAP_ANCHORS:
+        i = html.find(t)
+        if i >= 0:
+            return i
+    return -1
 
 
 def div_depth_at(html, idx):
@@ -822,7 +924,7 @@ def fix_wrap_scope(html):
 
     幂等：该节已在 .wrap 内时原样返回。
     """
-    a = html.find(WRAP_ANCHOR)
+    a = find_wrap_anchor(html)
     if a < 0:
         return html
     hs = html.rfind("<h2", 0, a)               # 该 <h2> 标签的起点
@@ -883,7 +985,7 @@ def set_kpi_inner(seg, open_re, text, name=""):
     return seg[:cm.end()] + text + seg[close.start():], True
 
 
-def update_kpi_cards(html):
+def update_kpi_cards(html, only=None):
     """把顶部 7 张 KPI 卡里的 AFGI 相关数值做成全数据驱动。
 
     · A股恐慌贪婪指数：数值 / 状态徽章（含配色）/ 截至日
@@ -892,10 +994,13 @@ def update_kpi_cards(html):
     · 其余三张（评分报告期 / 股池覆盖个股 / 申万三级行业）只在季度股池更新时变，
       由 update_latest.py 负责，本函数不动。
     """
+    def _want(label):
+        return True if not only else label in only
+
     done = []
 
     # ① A股恐慌贪婪指数
-    rd = AP.latest_afgi_reading()
+    rd = AP.latest_afgi_reading() if _want("A股恐慌贪婪指数") else None
     if rd:
         sp = kpi_span(html, "A股恐慌贪婪指数")
         if sp is None:
@@ -923,6 +1028,8 @@ def update_kpi_cards(html):
 
     # ② 稳健联合当前仓位（AFGI 组合当期目标仓位）
     try:
+        if not _want("稳健联合当前仓位"):
+            raise StopIteration
         pos = AP.current_position_pct()
         hold = pd.read_csv(HOLD_FILE, dtype={"代码": str})
         last_rb = sorted(set(hold["调仓日"].astype(str)))
@@ -937,12 +1044,16 @@ def update_kpi_cards(html):
             if ok1 and n_d:
                 html = html[:i0] + seg + html[i1:]
                 done.append("稳健联合当前仓位 → %.0f%%（截至 %s）" % (pos, asof))
+    except StopIteration:
+        pass
     except Exception as e:                      # KPI 失败不能阻断整页刷新
         log("  ! 稳健联合当前仓位 更新失败：%s" % e)
 
     # ③④ 两个组合的最新一期持仓只数
     for label, path, col in (("动量组合持仓", HOLD_FILE, None),
                              ("质量Top28组合持仓", QUAL_FILE, None)):
+        if not _want(label):
+            continue
         try:
             df = pd.read_csv(path, dtype={"代码": str})
             last = sorted(set(df["调仓日"].astype(str)))[-1]
@@ -962,6 +1073,74 @@ def update_kpi_cards(html):
     return html
 
 
+# ── v3 版式主流程 ────────────────────────────────────────────────────
+def run_v3(html, bt, args):
+    """只刷新质量Top28；CSFM/TSFM/B-score/仓位模块一律原样保留。"""
+    dates, series = refresh_series_v3(bt)
+
+    new_bt = {
+        "dates": dates,
+        "order": list(bt["order"]),
+        "label": dict(bt["label"]),
+        "color": dict(bt["color"]),
+        "series": series,
+    }
+    i = html.index("var BT=")
+    js, je = json_span(html, i)
+    html = (html[:js]
+            + json.dumps(new_bt, ensure_ascii=False, separators=(",", ":"))
+            + html[je:])
+    log("  ✓ var BT= 已替换（%d 条曲线 × %d 个交易日）"
+        % (len(new_bt["order"]), len(dates)))
+    log("  · 静态 SVG 兜底图跳过（v3 主图由页面 JS 按 BT 绘制，静态图仅作无脚本兜底）")
+
+    html = set_qual_stat_v3(html, series)
+    html = rebuild_qual_section(html, QUAL_ANCHOR_V3, QUAL_NEXT_V3)
+    # v3 的 AFGI / 联合仓位由 AFGI 链路维护（本机 AFGI 数据可能比页面旧），只动持仓只数
+    html = update_kpi_cards(html, only=("质量Top28组合持仓",))
+
+    # ── 自检（v3 口径）─────────────────────────────────────────────
+    ok = True
+    checks = [
+        ("var BT=", 1, True),
+        ('id="posChart"', 1, True),
+        ('id="posA"', 1, True),
+        ('class="pbox b-ctrl"', 16, True),
+        ('class="wt"', N_SHOW_QUAL * 8, False),
+        ("排名前 3 名各 16%", 0, True),
+        ('class="pchg', 0, True),
+    ]
+    for token, expect, exact in checks:
+        got = html.count(token)
+        bad = (got != expect) if exact else (got < expect)
+        if bad:
+            ok = False
+        log("  %s %-18s 期望 %s%-4s 实际 %s"
+            % ("!" if bad else "✓", token, "" if exact else "≥", expect, got))
+
+    for key in ("因子动量CSFM", "因子动量TSFM", "B-score组合", "质量Top28组合"):
+        if key not in series:
+            ok = False
+            log("  ! 缺少曲线：%s" % key)
+    if len(dates) != len(bt["dates"]):
+        ok = False
+        log("  ! 日期轴被意外改变：%d → %d" % (len(bt["dates"]), len(dates)))
+    miss = [d for d, v in zip(dates, series.get("质量Top28组合", [])) if v is None]
+    if miss:
+        ok = False
+        log("  ! 质量Top28 有 %d 天缺值（首个 %s）" % (len(miss), miss[0]))
+    log("  · 曲线 %d 条 / %d 个交易日（%s → %s）"
+        % (len(new_bt["order"]), len(dates), dates[0], dates[-1]))
+
+    if args.check:
+        log("\n--check：仅自检，未写文件")
+        return 0 if ok else 1
+
+    write_text(args.out, html)
+    log("\n已写出：%s（%s chars）" % (args.out, f"{len(html):,}"))
+    return 0 if ok else 1
+
+
 # ── 主流程 ──────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -975,10 +1154,17 @@ def main():
     html = read_text(args.base)
     log("模板：%s（%s chars）" % (args.base, f"{len(html):,}"))
 
+    layout = detect_layout(html)
+    log("版式：%s（%s）"
+        % (layout, "v3 = CSFM/TSFM + 四、仓位建议 + 质量Top28 v2，只刷新质量Top28"
+                   if layout == "v3" else "v2 = 动量轮动版式，整页数据区重建"))
+
     html = apply_renames(html)
     html = inject_css(html)          # .pbox 胶囊方框样式（幂等）
-    html = update_rule_texts(html)
-    html = fix_wrap_scope(html)      # 「五、」模块收回 .wrap 容器（幂等）
+    if layout == "v2":
+        # v3 跳过：这段会把质量Top28 的口径文案改回旧的「前 3 名各 16%」
+        html = update_rule_texts(html)
+    html = fix_wrap_scope(html)      # 「五/六、」模块收回 .wrap 容器（幂等）
 
     # 防呆：var BT= 必须恰好 1 份，否则静态图与脚本会互相覆盖（历史踩过的坑）
     if html.count("var BT=") != 1:
@@ -990,6 +1176,9 @@ def main():
     bt = json.loads(html[js:je])
     log("模板净值：%s → %s，%d 个交易日，%d 条曲线"
         % (bt["dates"][0], bt["dates"][-1], len(bt["dates"]), len(bt["order"])))
+
+    if layout == "v3":
+        return run_v3(html, bt, args)
 
     # 1) 序列
     order_raw = read_table_order(html, bt)
