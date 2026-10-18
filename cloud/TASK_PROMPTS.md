@@ -46,33 +46,33 @@
 
 ---
 
-## 1. A股因子流水线·每日整链（主刷新 → PROF）
+## 1. A股因子流水线·每日整链（主刷新 → 发布）
 
 **调度类型**：重复 · 每周 周二/周三/周四/周五/周六 · 09:00
 （T+1 上午处理 T 日数据；AFGI 由 07:30 的独立云端任务先完成，本任务是第二、三棒）
 
 ```text
-在云端执行「舞弊调整质量因子·季度动态股池」的每日整链（主刷新 → PROF）。
+在云端执行「舞弊调整质量因子·季度动态股池」的每日整链（主刷新 → 复核发布）。
 
     GIT_PULL=1 bash /workspace/pool-core/cloud/daily.sh
 
-【调度位置】T+1 上午 09:00 处理 T 日数据。顺序不可颠倒：
-  07:30 AFGI 情绪指数（独立任务） → 09:00 主刷新（本任务） → PROF（本任务，紧随其后）。
-主刷新要读 AFGI 的 afgi_timeseries.csv；PROF 要同步主刷新刚更新好的 hfq 行情。
+【调度位置】T+1 上午 09:00 处理 T 日数据：
+  07:30 AFGI 情绪指数（独立任务） → 09:00 主刷新（本任务） → 复核发布（本任务）。
+主刷新要读 AFGI 的 afgi_timeseries.csv。
 
 脚本依次完成：
 [1/2] 主刷新：增量拉 560 只标的 hfq 日线 → 数据体检（阻断级异常即中止，不写入、不上传）
   → 补齐原始不复权 OHLC → 动量轮动引擎回测（现行 N=15 / K=10 / L=50）
   → 就地刷新页面数据区 → 覆写资料库节点 iB8I58mCTooLicPQ0Kyq0M → 回写 data/page_base.html。
-[2/2] PROF：同步行情 → 补抓财报 → PROF 评分 → 盈利能力Top40 回测
-  → 刷新页面 4.3 → 回写主项目模板 page_base.html。
+[2/2] PROF：已于 2026-10-18 弃用，整段跳过（v3 版式不含「盈利能力Top40」章节）。
+  需要恢复历史计算时用 PROF_ENABLE=1，只跑数据四步，不做页面插入。
 
-退出码：0 成功（含「非交易日跳过」）；10 主刷新失败（整链中止，不跑 PROF）；
-11 PROF 任一步失败。耗时约 10~20 分钟。
+退出码：0 成功（含「非交易日跳过」）；10 主刷新失败（整链中止，不发布）；
+11 PROF 阶段失败（PROF 已弃用，默认不会触发）。耗时约 10~20 分钟。
 
 汇报（简体中文，简要）：最新交易日、动量轮动累计收益与夏普、质量Top28组合累计收益、
 动量×AFGI稳健联合累计收益与当前目标仓位、AFGI 数值与状态、最新调仓日与本次换仓的
-买/卖/持有数量、距下次调仓还需几个交易日、盈利能力Top40 累计收益与最新日期、
+买/卖/持有数量、距下次调仓还需几个交易日、
 页面是否上传成功（https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M ）。
 
 若退出码非 0，说明失败在哪一步与错误摘要 —— 不要绕过数据体检强行上传。
@@ -96,8 +96,8 @@ prices_full_v2.csv、AFGI 情绪指数 afgi_timeseries.csv、AFGI 仓位组合�
 afgi_combo_nav.csv、盈利能力模型回测净值 prof_nav.csv、PROF 本地行情副本 ——
 并检查季度股池是否已纳入最新报告期。
 
-容差（脚本已内置）：PROF 排在主刷新之后，页面上的盈利能力Top40 曲线要等下一轮主刷新
-才会画上去，因此 PROF 两个数据源天然落后 1 个交易日，属正常现象；落后 ≥2 个交易日才告警。
+容差（脚本已内置）：PROF 两个数据源已随「盈利能力Top40」弃用（2026-10-18）退出判定，
+巡检表里只打印日期并标〔已弃用〕，不参与告警。
 
 退出码 0：回复一句「本周巡检通过，全部数据源最新日期 = XXXX-XX-XX」，并给出页面链接
 https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 即可。
@@ -106,8 +106,8 @@ https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 即可。
 报告期），并给出修复动作 ——
 · 「AFGI 落后」：在 /workspace/afgi_tdx 补跑 run.py，并把报告覆写到固定节点 ddbJ1onUkhBUybcqWTrwG5；
 · 「主刷新落后」：补跑 GIT_PULL=1 bash /workspace/pool-core/cloud/daily.sh；
-· 「PROF 落后 ≥2 个交易日」：在 /workspace/prof-model 依次补跑 sync_prices.py、
-  catchup.py、prof_score.py、backtest_prof.py、update_prof_data.py --page-only、sync_page_base.py；
+· 「PROF 落后」：已弃用（2026-10-18），两个 PROF 源不再参与判定，可忽略；
+  确需重算用 PROF_ENABLE=1 重跑 daily.sh（只跑数据，不做页面插入）；
 · 「股池缺报告期」：补跑季度股池任务。
 ```
 
@@ -141,27 +141,26 @@ https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 即可。
      （严禁再调用 pool-core/scripts/backtest.py，那是已废止的旧口径）
    - cd /workspace/prof-model && python3 sync_prices.py && python3 prof_score.py
      && python3 backtest_prof.py（缺财报就先跑 catchup.py）
-3. 刷新页面：
-   - cd /workspace/prof-model && python3 update_prof_data.py --page-only（更新 4.3）
-   - 成功后 python3 sync_page_base.py，把产物回写为 /workspace/pool-core/data/page_base.html
-   - 最后 GIT_PULL=1 bash /workspace/pool-core/cloud/daily.sh 或
+3. 刷新页面（PROF 页面插入已弃用，**不要**再跑 update_prof_data --page-only / sync_page_base）：
+   - GIT_PULL=1 bash /workspace/pool-core/cloud/daily.sh 或
      cd /workspace/pool-core && python3 scripts/refresh_page.py，
      随后用资料库 page/import_html.py 覆写节点 iB8I58mCTooLicPQ0Kyq0M
      —— 必须带 --node-block-id iB8I58mCTooLicPQ0Kyq0M，绝不能新建页面。
 
 【三条硬约束】
 · 绝对不要运行 pool-core/scripts/gen_page.py 或 gen_pages.py 全量重生成页面，那会抹掉
-  线上已有的交互时间轴与盈利能力Top40（4.3）。
+  线上已有的交互时间轴、CSFM/TSFM 两个因子动量组合与「四、历史仓位建议」模块（v3 版式）。
 · 若第二步任何一步失败或数据不完整，立即停止并汇报，不要用半成品覆写线上页面。
-· 现行组合口径：质量组合为「质量Top28组合」（前 3 名各 16%、其余 25 只各 2.08%）；
-  盈利能力组合为「盈利能力Top40」（前 40 只等权，每只 2.50%）；情绪仓位组合为
-  「动量×AFGI稳健联合」（BT 序列键「联合仓位」，规则见 pool-core/scripts/afgi_pos.py）。
+· 现行组合口径：质量组合为「质量Top28组合」v2 三道筛（剔除 20 日均成交额 < 5,000 万、
+  按换手率代理＝20 日均成交额÷总市值 剔除最拥挤 1/3、权重 ∝ 1/(换手分位+0.15)、
+  单只限幅 2%~8%）；CSFM / TSFM 两个因子动量组合与 B-score（质量Top30×估值择时）
+  由各自链路维护；「盈利能力Top40」已于 2026-10-18 弃用，不再计算、不上页面。
 
 重要：财报接口有频控，脚本内置自适应退避，全流程可能耗时 40~60 分钟，必须让它跑完，
 不要中途中断；若中途失败可直接重跑（各阶段均有断点续传）。
 
-完成后汇报：本次更新的报告期、股池覆盖行业数与入选只数、动量轮动 / 动量×AFGI稳健联合 /
-质量Top28组合 / 盈利能力Top40 四者的累计收益与最大回撤，以及页面链接
+完成后汇报：本次更新的报告期、股池覆盖行业数与入选只数、因子动量 CSFM / 因子动量 TSFM /
+质量Top28组合 三者的累计收益与最大回撤，以及页面链接
 https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 。
 若本次是 4 号补跑且 1 号已成功，只需说明补跑结果（新增/补齐了哪些标的，或「无新增」）。
 ```
@@ -173,7 +172,7 @@ https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 。
 | # | 动作 | 本机对应任务（需置 PAUSED） |
 |---|---|---|
 | 0 | 跑一次 bootstrap，再手动跑一次 daily.sh 验证 | — |
-| 1 | 建「每日整链」云端任务（周二–周六 09:00） | 主刷新 `15ac7d83`、PROF `a7a3aeb2` |
+| 1 | 建「每日整链」云端任务（周二–周六 09:00） | 主刷新 `15ac7d83`（PROF `a7a3aeb2` 已弃用，保持暂停） |
 | 2 | 建「周巡检」云端任务（周五 12:00） | 周巡检 `67f38af0` |
 | 3 | 建「季度股池」云端任务（5/1·9/1·11/1 05:30） | 季度股池 `7535b496` |
 | 3b | 建「每日仓位建议」云端任务（周二–周六 08:10，`cloud/pos_daily.sh`） | 无（新增） |

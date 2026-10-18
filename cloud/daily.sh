@@ -55,36 +55,27 @@ if grep -q "未探测到新交易日" "$OUT_LOG"; then
 fi
 rm -f "$OUT_LOG"
 
-# ------------------------------------------------------------------ PROF
-log "=== [2/2] PROF：同步行情 → 补抓财报 → 评分 → 回测 →（v2 版式才刷页面）==="
-cd "$PROF_DIR" || exit 11
-# pool/ 与 prof/ 是被 .gitignore 排除的中间产物目录，云端冷启动需预建
-mkdir -p "$PROF_DIR/pool" "$PROF_DIR/prof"
-
-# PROF 任何一步失败都只降级、不阻断后面的「发布」——
-# 主刷新已经把编辑态传上去了，公网页若不发布就会停在旧快照，比 PROF 滞后更糟。
+# ------------------------------------------------------- PROF（2026-10-18 弃用）
+# 「盈利能力Top40」组合已弃用：v3 版式（CSFM/TSFM + 四、仓位建议 + 质量Top30×估值择时）
+# 不含该章节，线上页面也没有任何 Top40 内容，页面插入无处可落。
+# 默认整段跳过（顺带省掉 catchup 的 40~60 分钟）；确需恢复历史计算用 PROF_ENABLE=1，
+# 那时只跑数据四步，仍不做页面插入/模板回写。
 PROF_RC=0
-if ! ( set -e
-       $PY sync_prices.py
-       $PY catchup.py
-       $PY prof_score.py
-       $PY backtest_prof.py ); then
-  warn "PROF 数据阶段失败（后续步骤跳过，转入发布）"
-  PROF_RC=11
-fi
-
-# 页面插入只对 v2 版式（含「4.3 盈利能力Top40」）有效。
-# v3 版式（2026-10-18 起：CSFM/TSFM + 仓位建议 + 质量Top30×估值择时）已把 4.3 换掉，
-# 此时再跑 update_prof_data --page-only 会往统计表里多插一行、与 BT 曲线错位。
-if [[ $PROF_RC -eq 0 ]]; then
-  if grep -q 'id="posChart"' "$POOL_DIR/data/page_base.html"; then
-    log "· v3 版式：跳过 PROF 页面插入与模板回写（4.3 章节已不存在，数据仍已更新）"
-  else
-    $PY update_prof_data.py --page-only || { warn "update_prof_data --page-only 失败"; PROF_RC=11; }
-    if [[ $PROF_RC -eq 0 ]]; then
-      $PY sync_page_base.py || { warn "sync_page_base 失败（模板未回写）"; PROF_RC=11; }
-    fi
+if [[ "${PROF_ENABLE:-0}" == "1" ]]; then
+  log "=== [2/2] PROF（PROF_ENABLE=1）：同步行情 → 补抓财报 → 评分 → 回测 ==="
+  cd "$PROF_DIR" || exit 11
+  # pool/ 与 prof/ 是被 .gitignore 排除的中间产物目录，云端冷启动需预建
+  mkdir -p "$PROF_DIR/pool" "$PROF_DIR/prof"
+  if ! ( set -e
+         $PY sync_prices.py
+         $PY catchup.py
+         $PY prof_score.py
+         $PY backtest_prof.py ); then
+    warn "PROF 数据阶段失败（后续步骤跳过，转入发布）"
+    PROF_RC=11
   fi
+else
+  log "=== [2/2] PROF：盈利能力Top40 已于 2026-10-18 弃用，整段跳过（PROF_ENABLE=1 可恢复）==="
 fi
 
 # ------------------------------------------------------------------ 发布
