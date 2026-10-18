@@ -62,6 +62,42 @@ CODES_FILE = os.path.join(BASE, "scripts", "codes_pool.json")
 PAGE_HTML = os.path.join(DATA, "pool_page.html")
 
 PAGE_NODE = "iB8I58mCTooLicPQ0Kyq0M"          # 资料库页面节点（覆写目标）
+
+# ── 上传前门禁（2026-10-18 教训）──────────────────────────────────────
+# 10-18 22:44 因为刷新模板落后于线上版式（模板还是「三、动量轮动回测」，
+# 线上已是 CSFM/TSFM + 仓位模块 + 质量Top28 v2），一次 daily_refresh 就把
+# 线上整页回退成旧版式。此后任何一条链路把「旧版式 / 残缺页」推到节点上都会
+# 被这里拦下：宁可当日不更新，也不能把已发布的内容抹掉。
+GATE_REQUIRED = [
+    ('id="btChart"', 1),          # 主图
+    ('id="posChart"', 1),         # 四、CSFM/TSFM 历史仓位建议
+    ('id="posA"', 1),             # 仓位图时间轴（双滑块）
+    ('class="pbox b-ctrl"', 12),  # 持仓表的仓位方框（两个组合 × 最近 8 期）
+    ('因子动量CSFM', 1),
+    ('因子动量TSFM', 1),
+    ('质量Top28组合', 1),
+]
+GATE_FORBIDDEN = [
+    "三、动量轮动回测",                    # 旧版式特征（该组合已下线）
+    "排名前 3 名各 16%",                   # 质量Top28 旧权重口径（说明段）
+    "前 3 名各 16%，其余 25 只各 2.08%",   # 同上的图例/正文表述
+]
+
+
+def page_gate(path):
+    """返回空字符串表示通过；否则返回拒绝原因。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            h = f.read()
+    except OSError as e:
+        return f"读不到页面产物：{e}"
+    hit = [t for t in GATE_FORBIDDEN if t in h]
+    if hit:
+        return "产物命中旧版式/旧口径特征：" + "、".join(hit)
+    miss = [f"{t}×{n}" for t, n in GATE_REQUIRED if h.count(t) < n]
+    if miss:
+        return "产物缺少必需区块：" + "、".join(miss)
+    return ""
 PROBE = "sh000300"                             # 交易日探测器（沪深300）
 BENCH = {"沪深300": "sh000300", "创业板50": "sz399673", "科创50": "sh000688"}
 
@@ -413,6 +449,12 @@ def main():
         return
 
     log("\n=== 上传资料库 ===")
+    gate = page_gate(PAGE_HTML)
+    if gate:
+        raise SystemExit(
+            "页面完整性门禁未通过，已拒绝上传（线上保持原状）：\n  " + gate
+            + "\n  → 多半是 data/page_base.html 模板与线上版式不一致。"
+              "先跑 python3 cloud/seed_page_base.py --force 重新拉取线上模板。")
     out = run([PY, str(library_skill() / "page" / "import_html.py"), PAGE_HTML,
                "--node-block-id", PAGE_NODE], timeout=1800)
     line = [l for l in out.splitlines() if "KS_IMPORT_OK" in l]
