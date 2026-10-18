@@ -176,6 +176,50 @@ https://www.workbuddy.cn/space/d/iB8I58mCTooLicPQ0Kyq0M 。
 | 1 | 建「每日整链」云端任务（周二–周六 09:00） | 主刷新 `15ac7d83`、PROF `a7a3aeb2` |
 | 2 | 建「周巡检」云端任务（周五 12:00） | 周巡检 `67f38af0` |
 | 3 | 建「季度股池」云端任务（5/1·9/1·11/1 05:30） | 季度股池 `7535b496` |
+| 3b | 建「每日仓位建议」云端任务（周二–周六 08:10，`cloud/pos_daily.sh`） | 无（新增） |
 
 AFGI 本机任务 `3e8ca80b` 早已有独立的云端任务在跑，不在此列。
 验证云端连续 3~5 个交易日稳定后，再决定删除还是长期保留本机任务（保留即必须保持 PAUSED）。
+
+---
+
+## 5 号｜每日仓位建议刷新（CSFM / TSFM）
+
+> 独立任务，不参与 1 号主刷新链。只更新「四、CSFM 和 TSFM 历史仓位建议」图表数据
+> 与「五、持仓变动明细」里 16 个调仓日的仓位方框，不动股池、持仓名单和第三节净值。
+
+**建议调度**：周二–周六 08:10（主刷新 09:00 之前跑完，页面一早就带最新仓位）。
+**执行命令**：
+
+```bash
+cd /workspace/pool-core && GIT_PULL=1 bash cloud/pos_daily.sh
+```
+
+**等价的 agent 提示词**（若用自然语言任务）：
+
+```
+刷新季度股池页面的 CSFM / TSFM 建议仓位。
+
+1. cd /workspace/pool-core && git pull
+2. 确保 data/fbook_monthly.csv（持仓加权反馈强度 F 的月度序列）、
+   data/idx_932000.csv（中证2000）、data/idx_399006.csv（创业板指）存在；
+   缺任一项就停止并汇报，不要用残缺数据覆写页面。
+3. 执行 python3 scripts/pos_sync.py --page data/_live/page.html --download
+   --fbook data/fbook_monthly.csv --upload --publish
+   —— 脚本会：拉取线上页面 → 用页面内嵌的 BT 净值重算仓位（过热降仓 / 60日均线破位 /
+   TSFM 的 F 门控，取最小值，T 日决策 T+1 生效）→ 覆写「var POS」数据 →
+   刷新 16 个仓位方框与图例里的当前仓位 → 用 import_html.py --node-block-id
+   iB8I58mCTooLicPQ0Kyq0M 覆写同一节点 → 重新发布外部网页。
+4. 汇报：最新交易日、CSFM 与 TSFM 的当期建议仓位、是否触发降仓（哪条规则）。
+
+【硬约束】
+· 绝不新建页面；节点固定 iB8I58mCTooLicPQ0Kyq0M。
+· 只改仓位区块：不要跑 gen_page.py / refresh_page.py / daily_refresh.py，
+  否则会用旧模板覆盖线上新版式（含 CSFM/TSFM 两个组合的全部内容）。
+· 若线上页面里没有 id="posChart"（说明版式被回滚），立即停止并汇报，
+  不要自动插入模块。
+```
+
+**fbook_monthly.csv 怎么来**：由本机 `fmf` 工程（因子动量 × F 反馈强度）在每个调仓日重算后
+提交到 pool-core 仓库；云端只读。F 门控是月频量，月中不需要更新。
+
