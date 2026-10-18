@@ -56,21 +56,44 @@ fi
 rm -f "$OUT_LOG"
 
 # ------------------------------------------------------------------ PROF
-log "=== [2/2] PROF：同步行情 → 补抓财报 → 评分 → 回测 → 刷新 4.3 → 回写模板 ==="
+log "=== [2/2] PROF：同步行情 → 补抓财报 → 评分 → 回测 →（v2 版式才刷页面）==="
 cd "$PROF_DIR" || exit 11
 # pool/ 与 prof/ 是被 .gitignore 排除的中间产物目录，云端冷启动需预建
 mkdir -p "$PROF_DIR/pool" "$PROF_DIR/prof"
 
-$PY sync_prices.py            || { warn "sync_prices 失败（源文件更旧/行数变少，已拒绝覆盖）"; exit 11; }
-$PY catchup.py                || { warn "catchup 失败（财报抓取限频，可重跑续跑）"; exit 11; }
-$PY prof_score.py             || { warn "prof_score 失败"; exit 11; }
-$PY backtest_prof.py          || { warn "backtest_prof 失败"; exit 11; }
-$PY update_prof_data.py --page-only || { warn "update_prof_data --page-only 失败"; exit 11; }
-$PY sync_page_base.py         || { warn "sync_page_base 失败（模板未回写，明日主刷新会用旧模板）"; exit 11; }
+# PROF 任何一步失败都只降级、不阻断后面的「发布」——
+# 主刷新已经把编辑态传上去了，公网页若不发布就会停在旧快照，比 PROF 滞后更糟。
+PROF_RC=0
+if ! ( set -e
+       $PY sync_prices.py
+       $PY catchup.py
+       $PY prof_score.py
+       $PY backtest_prof.py ); then
+  warn "PROF 数据阶段失败（后续步骤跳过，转入发布）"
+  PROF_RC=11
+fi
+
+# 页面插入只对 v2 版式（含「4.3 盈利能力Top40」）有效。
+# v3 版式（2026-10-18 起：CSFM/TSFM + 仓位建议 + 质量Top30×估值择时）已把 4.3 换掉，
+# 此时再跑 update_prof_data --page-only 会往统计表里多插一行、与 BT 曲线错位。
+if [[ $PROF_RC -eq 0 ]]; then
+  if grep -q 'id="posChart"' "$POOL_DIR/data/page_base.html"; then
+    log "· v3 版式：跳过 PROF 页面插入与模板回写（4.3 章节已不存在，数据仍已更新）"
+  else
+    $PY update_prof_data.py --page-only || { warn "update_prof_data --page-only 失败"; PROF_RC=11; }
+    if [[ $PROF_RC -eq 0 ]]; then
+      $PY sync_page_base.py || { warn "sync_page_base 失败（模板未回写）"; PROF_RC=11; }
+    fi
+  fi
+fi
 
 # ------------------------------------------------------------------ 发布
 log "=== [3/3] 统一发布：把三个固定页面重新发布为外部网页（解冻冻结快照，保证网页端同步）==="
 ( cd "$POOL_DIR" && $PY cloud/publish_pages.py ) \
   || warn "页面发布失败（不影响已入库数据；可重跑 cloud/publish_pages.py 或手动发布）"
 
+if [[ $PROF_RC -ne 0 ]]; then
+  log "===== 每日整链结束（页面已刷新并发布，PROF 阶段失败 rc=$PROF_RC）====="
+  exit $PROF_RC
+fi
 log "===== 每日整链结束（成功）====="
