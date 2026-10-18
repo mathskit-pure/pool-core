@@ -17,6 +17,9 @@ import sys, os, json
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import quality_v2 as Q2      # 质量 Top28 v2 的选股/加权规则
+
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 BASE = r"C:\Users\12066\WorkBuddy\2026-10-05-23-13-30"
 
@@ -61,6 +64,22 @@ def load():
                                  key=lambda x: -x[1])
                        for k, v in pools.items()}
     return close, sw3, name, asof, pool_by_period, score_by_period
+
+
+TURN_FILE = os.path.join(BASE, "data", "turnover_panel.csv")
+
+
+def load_turnover():
+    """换手率面板：{报告期: {code: (adv20, turn)}}；缺失则返回空字典（自动降级到 v1）"""
+    if not os.path.exists(TURN_FILE):
+        print("! 未找到 turnover_panel.csv，质量组合退回 v1 权重", flush=True)
+        return {}
+    t = pd.read_csv(TURN_FILE, encoding="utf-8-sig", dtype={"code": str})
+    out = {}
+    for per, g in t.groupby("报告期"):
+        out[per] = {r["code"]: (float(r["adv20"]), float(r["turn"])) for _, r in g.iterrows()}
+    print(f"换手面板：{len(out)} 期 · {t['code'].nunique()} 只", flush=True)
+    return out
 
 
 def qual_weights(n):
@@ -143,6 +162,7 @@ def perf(ret, label):
 
 def main():
     close, sw3, name, asof, pool_by_period, score_by_period = load()
+    turn_by_period = load_turnover()
     print("价格矩阵:", close.shape, close.index.min(), "→", close.index.max(), flush=True)
 
     ret = close.pct_change()
@@ -169,13 +189,15 @@ def main():
         return float(ss.iloc[-1]) if len(ss) else np.nan
 
     W = pd.DataFrame(0.0, index=dates, columns=close.columns)
-    Wq = pd.DataFrame(0.0, index=dates, columns=close.columns)   # 质量 Top28 组合
+    Wq = pd.DataFrame(0.0, index=dates, columns=close.columns)   # 质量 Top28 组合 v2
+    Wq_old = pd.DataFrame(0.0, index=dates, columns=close.columns)  # 旧方案（前3名16%）对照
     holdings_rows = []
     removed_rows = []
     qual_rows = []
     qual_removed = []
     prev_set, entry_of = set(), {}          # 上一期持仓 / 个股本轮建仓日
     last_q_period, prev_qw = None, pd.Series(0.0, index=close.columns)
+    prev_qw_old = pd.Series(0.0, index=close.columns)
     q_prev_set, q_entry_of = set(), {}      # 质量组合：上季持仓 / 个股本轮建仓日
     for j, pos in enumerate(reb_pos):
         end_pos = reb_pos[j + 1] - 1 if j + 1 < len(reb_pos) else len(dates) - 1
@@ -223,15 +245,33 @@ def main():
     for pos in range(start_pos, len(dates)):
         d = dates[pos]
         per = active_period(d, asof)
-        if per != last_q_period:                       # 新季度 → 换仓、等权重新建仓
+        if per != last_q_period:                       # 新季度 → 换仓重建
             last_q_period = per
             ok_q = {c for c in close.columns
                     if listed_pool.iloc[pos].get(c, 0) >= MIN_LISTED}
-            qcodes = select_by_score(d, asof, score_by_period, sw3, close, ok_q)
-            qw = qual_weights(len(qcodes))
+            # ① 旧方案（前 3 名各 16%）——保留作对照
+            qcodes_old = select_by_score(d, asof, score_by_period, sw3, close, ok_q)
+            qw_old = qual_weights(len(qcodes_old))
+            w_old = pd.Series(0.0, index=close.columns)
+            for c, ww in zip(qcodes_old, qw_old):
+                w_old[c] = ww
+
+            # ② v2 方案：流动性门槛 + 剔除最拥挤 1/3 + 反换手加权（2%~8%）
+            cand = [(c, s_) for c, s_ in score_by_period.get(per, [])
+                    if c in close.columns and (ok_q is None or c in ok_q)]
+            picked_v2, v2meta = Q2.select_v2(cand, sw3, turn_by_period.get(per, {}),
+                                             lq=LQ, max_per_ind=MAX_PER_IND_Q)
             w = pd.Series(0.0, index=close.columns)
-            if qcodes:
-                for c, ww in zip(qcodes, qw):
+            if v2meta["degrade"] == "ok" and picked_v2:
+                qcodes = [c for c, _, _ in picked_v2]
+                v2w = {c: ww for c, ww, _ in picked_v2}
+                v2pct = {c: p for c, _, p in picked_v2}
+                for c, ww in v2w.items():
+                    w[c] = ww
+            else:                       # 降级：数据不足时退回旧方案
+                print(f"  [降级] {per} 用旧权重重跑（{v2meta['degrade']}）", flush=True)
+                qcodes, v2w, v2pct = list(qcodes_old), dict(zip(qcodes_old, qw_old)), {}
+                for c, ww in v2w.items():
                     w[c] = ww
             qset = set(qcodes)
 
@@ -247,7 +287,6 @@ def main():
                                      "区间涨跌幅": chg})
 
             smap = dict(score_by_period.get(per, []))
-            qw2 = qual_weights(len(qcodes))
             for rank, c in enumerate(qcodes, 1):
                 if c not in q_prev_set:
                     q_entry_of[c] = d
@@ -255,16 +294,25 @@ def main():
                                   "代码": c, "名称": name.get(c, c),
                                   "申万三级": sw3.get(c, "未分类"),
                                   "FAQ得分": smap.get(c),
-                                  "建仓权重": qw2[rank - 1] if qcodes else 0,
+                                  "换手分位": v2pct.get(c),
+                                  "建仓权重": float(w.get(c, 0.0)),
                                   "状态": "新增" if c not in q_prev_set else "持有"})
+            print(f"  {d.date()} {per} 持仓 {len(qcodes)} 只 "
+                  f"（门槛 {(v2meta['floor'] or 0)/1e4:.0f} 万 · {v2meta['degrade']}）", flush=True)
             q_prev_set = qset
+            prev_qw_old = w_old
         else:                                          # 季度内不动，权重自然漂移
             r = ret.iloc[pos].reindex(close.columns).fillna(0.0)
             w = prev_qw * (1.0 + r)
             s = float(w.sum())
             w = (w / s) if s else prev_qw
+            w_old = prev_qw_old * (1.0 + r)
+            s2 = float(w_old.sum())
+            w_old = (w_old / s2) if s2 else prev_qw_old
         Wq.iloc[pos] = w.values
+        Wq_old.iloc[pos] = w_old.values
         prev_qw = w
+        prev_qw_old = w_old
 
     # 等权重对照（同一动态股池）
     We = pd.DataFrame(0.0, index=dates, columns=close.columns)
@@ -281,8 +329,10 @@ def main():
     strat = (W.shift(1) * ret).sum(axis=1)[mask]
     equal = (We.shift(1) * ret).sum(axis=1)[mask]
     qual = (Wq.shift(1) * ret).sum(axis=1)[mask]
+    qual_old = (Wq_old.shift(1) * ret).sum(axis=1)[mask]
 
-    rows = [perf(strat, "动量轮动策略"), perf(equal, "动量轮动策略（等权）"), perf(qual, "质量Top28组合")]
+    rows = [perf(strat, "动量轮动策略"), perf(equal, "动量轮动策略（等权）"),
+            perf(qual, "质量Top28组合"), perf(qual_old, "质量Top28组合(旧方案)")]
     bench_eq = None
     bm_all = os.path.join(BASE, "data", "bench_all.csv")
     bench_map = {}
@@ -323,7 +373,8 @@ def main():
     print(f"持仓明细 {len(holdings_rows)} 行 · 剔除记录 {len(removed_rows)} 行 · "
           f"质量Top28 成分 {len(qual_rows)} 行 · 质量剔除 {len(qual_removed)} 行", flush=True)
     nav = pd.DataFrame({"策略": (1 + strat).cumprod(), "动量轮动策略（等权）": (1 + equal).cumprod(),
-                        "质量Top28组合": (1 + qual).cumprod()})
+                        "质量Top28组合": (1 + qual).cumprod(),
+                        "质量Top28组合(旧方案)": (1 + qual_old).cumprod()})
     if bench_eq is not None:
         nav = nav.join(bench_eq)
     nav.to_csv(os.path.join(out_dir, "nav.csv"), encoding="utf-8-sig")

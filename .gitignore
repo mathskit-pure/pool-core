@@ -5,6 +5,7 @@
 # 例外：pools.json 是季度股池成员名单，重建需全量财报，代价过高，故随代码入库。
 data/*
 !data/pools.json
+!data/turnover_panel.csv
 
 output/
 .workbuddy/
