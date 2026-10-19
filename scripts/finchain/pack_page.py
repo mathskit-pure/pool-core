@@ -184,6 +184,7 @@ def build_recent(name, daily, pos, n_periods=8):
                 if j is not None:
                     p = pos["csfm" if combo == "CSFM" else "tsfm"][j]
             rows.append({"date": ed.strftime("%Y-%m-%d") if ed is not None else d.strftime("%Y-%m-%d"),
+                         "dec": d.strftime("%Y-%m-%d"),
                          "ret": None if ret is None else round(ret, 4),
                          "pos": p, "hold": hold, "out": outs, "codes": list(cur)})
         rows = rows[-n_periods:]

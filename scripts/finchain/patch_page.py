@@ -96,8 +96,16 @@ def sec_bt_table(perf):
     return "<tbody>" + "".join(out) + "</tbody>"
 
 
-def sec_recent(rows, kind):
-    """五、持仓变动明细的单组合 tbody"""
+def sec_recent(rows, kind, fancy=False):
+    """五、持仓变动明细的单组合 tbody
+
+    原版三张表写法并不统一，这里**照原样**复刻，不做「统一美化」：
+      · 5.1 / 5.2（fancy=False）：持仓格里各条直接拼接、无分隔符；
+        剔除格用「、」分隔；整行没有小字副行。
+      · 5.3 质量Top28（fancy=True）：持仓格与剔除格都用「、」分隔，
+        且三个单元格末尾各带一行 <span class="cnt"> 小字副行
+        （季末日 / 「N 只 · 新增 M」/「K 只」）。
+    """
     body = []
     for i, r in enumerate(rows):
         latest = '<span class="pill">最新一期</span>' if i == 0 else ""
@@ -109,11 +117,18 @@ def sec_recent(rows, kind):
         if r["ret"] is not None:
             cls = "up" if r["ret"] >= 0 else "dn"
             nav = f'<span class="pbox b-nav {cls}">较上期 {r["ret"]*100:+.2f}%</span>'
-        head = f'<td class="day">{r["date"]}{pos}{nav}{latest}</td>'
+        dec = r.get("dec") or r["date"]
+        cnt = (f'<span class="cnt">{dec}</span>') if fancy else ""
+        head = f'<td class="day">{r["date"]}{pos}{nav}{latest}{cnt}</td>'
 
-        hold = "".join(
-            f'<span class="{"nm-new" if h["new"] else "nm"}">{esc(h["n"])}</span>'
-            f'<span class="wt">{h["w"]*100:.2f}%</span>' for h in r["hold"])
+        items = [f'<span class="{"nm-new" if h["new"] else "nm"}">{esc(h["n"])}</span>'
+                 f'<span class="wt">{h["w"]*100:.2f}%</span>' for h in r["hold"]]
+        hold = ("、".join(items) if fancy else "".join(items))
+        if fancy:
+            n_new = sum(1 for h in r["hold"] if h["new"])
+            tail = f'{len(r["hold"])} 只' + (f' · 新增 {n_new}' if n_new else "")
+            hold += f'<span class="cnt">{tail}</span>'
+
         outs = []
         for o in r["out"]:
             if o["r"] is None:
@@ -124,8 +139,16 @@ def sec_recent(rows, kind):
                 outs.append(f'<span class="nm-out">{esc(o["n"])}</span>'
                             f'<span class="join">建仓 {o["e"] or "—"}</span> '
                             f'<span class="{cls}">{o["r"]*100:+.2f}%</span>')
-        out_cell = "、".join(outs) if outs else '<span class="mut">无</span>'
-        body.append(f'<tr>{head}<td class="cell">{hold}</td><td class="cell">{out_cell}</td></tr>')
+        if outs:
+            out_cell = "、".join(outs)
+            if fancy:
+                out_cell += f'<span class="cnt">{len(r["out"])} 只</span>'
+        else:
+            out_cell = '<span class="mut">无</span>'
+            if fancy:
+                out_cell += '<span class="cnt">0 只</span>'
+        body.append(f'<tr>{head}<td class="cell">{hold}</td>'
+                    f'<td class="cell">{out_cell}</td></tr>')
     return "<tbody>" + "".join(body) + "</tbody>"
 
 
@@ -229,7 +252,9 @@ def build():
         s1 = h.find(marks[i + 1])
         assert 0 < s0 < s1, f"找不到 {marks[i]}"
         seg = h[s0:s1]
-        seg = re.sub(r'<tbody>.*?</tbody>', sec_recent(recent[k], k), seg, count=1, flags=re.S)
+        seg = re.sub(r'<tbody>.*?</tbody>',
+                     lambda m, k=k: sec_recent(recent[k], k, fancy=(k == "Q28")),
+                     seg, count=1, flags=re.S)
         # 摘要行与表头都写着「持仓 N 只」，两处都要改
         seg = re.sub(r'持仓 \d+ 只', f'持仓 {len(recent[k][0]["hold"])} 只', seg)
         h = h[:s0] + seg + h[s1:]
