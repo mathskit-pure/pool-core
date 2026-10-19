@@ -70,6 +70,13 @@ PROF_DIR = _sibling("PROF_DIR")
 POOL_DATA = _sibling("POOL_DATA_DIR")
 AFGI_DIR = _sibling("AFGI_DIR")
 
+# 「官方中证800 口径」的数据侧工作区：build_page_data.py 与 out15/ 产物所在目录。
+# 页面渲染本身不依赖它（只吃 page_data.json），仅 --pack 时用来重跑数据打包。
+WORK15 = Path(os.environ.get("POOL15_DIR") or (
+    r"C:\Users\12066\WorkBuddy\2026-10-19-13-04-18\work"
+    if os.name == "nt" else POOL_DATA / "work"
+))
+
 # 常用产物
 PAGE_BASE = DATA / "page_base.html"
 PRICES = DATA / "prices_full_v2.csv"
@@ -116,3 +123,4 @@ if __name__ == "__main__":
     print(f"PROF_DIR  = {PROF_DIR}")
     print(f"POOL_DATA = {POOL_DATA}")
     print(f"AFGI_DIR  = {AFGI_DIR}")
+    print(f"WORK15    = {WORK15}")

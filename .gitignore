@@ -6,6 +6,9 @@
 data/*
 !data/pools.json
 !data/turnover_panel.csv
+# page_data.json 是季度股池页的唯一输入（渲染器只吃它，不读 CSV）。
+# 入库后云端只需替换这一个文件即可重发布，不必重建整条财报链。
+!data/page_data.json
 
 output/
 .workbuddy/

@@ -23,9 +23,30 @@
 | `bootstrap.sh` | 首次初始化：装依赖 + westock CLI + 克隆仓库 + **冷启动建缓存** | 手工跑一次 |
 | `daily.sh` | 每日整链：主刷新 → PROF | 每交易日 T+1 上午 |
 | `weekly.sh` | 六大数据源一致性巡检（只读） | 每周五 |
-| `quarterly.sh` | 季度股池数据侧更新 | 5/1 · 9/1 · 11/1 |
+| `quarterly.sh` | 季度股池数据侧更新（`PAGE=1` 时连带重发布页面） | 5/1 · 9/1 · 11/1 |
 | `lib.sh` | 公共变量与函数（被上面几个 source） | — |
 | `seed_page_base.py` | 从资料库线上节点拉模板 → `data/page_base.html` | bootstrap 调用 |
+
+### 页面更新走哪条路（重要）
+
+线上季度股池页自 2026-10-19 起是**「数据包 + 整页重绘」**结构：净值全靠内联 JS 现画，
+股池按行业分组嵌套渲染，页面里没有 `var BT=` / `svg#btChart` / `td#r{i}_{c}` 这些老锚点。
+
+| 脚本 | 适用结构 | 现状 |
+|---|---|---|
+| `scripts/republish_page.py` + `scripts/pagegen/` | 新结构（v4） | **当前唯一可用**，季度更新走这里 |
+| `scripts/refresh_page.py` | 旧结构（v2/v3） | 已加版式守卫：识别到 v4 会打印提示并**跳过（退 0）**，不会误报失败，也不会把页面改回旧版 |
+
+`republish_page.py` 的四段是分开的，任何一段都能单跑：
+
+```
+data/page_data.json ──render──> data/pool_page.html ──verify──> import_html ──> publish
+```
+
+- `render` 只吃 `page_data.json`，不碰任何 CSV —— 云端只要拿到数据包就能独立出页面；
+- `verify` 做**结构 / 脚本 / 数据**三层检查，其中数据层会用净值曲线反算年化·波动·夏普
+  与绩效表互校；任一失败即拒绝上传（`--force` 才会强上）；
+- `python scripts/pagegen/selftest.py` 是验证器自己的回归：注入 6 个故障，确认每层都真的会拦。
 
 AFGI 由 **独立的云端任务**负责（它自己有 `cloud/daily.sh`），不在这里。
 
