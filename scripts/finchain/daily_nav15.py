@@ -25,7 +25,6 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # 路径统一由 scripts/paths.py 解析（本机 Windows 与云端 Linux 同一份代码）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from paths import FIN_D15 as D15, FIN_OUT as OUT  # noqa: E402
-
 os.makedirs(OUT, exist_ok=True)
 
 COST = 0.0010
@@ -88,6 +87,16 @@ def csfm_tsfm_picks():
     Fm = cr[[f"F_{f}" for f in FACTORS]].copy()
     Fm.columns = FACTORS
 
+    # 新标的池：股池（申万三级各取 FAQ 前 3）。组合只在当期股池内选股。
+    pools = pd.read_csv(os.path.join(D15, "pools_v5.csv"), dtype={"code": str})
+    pools["code"] = pools["code"].str.zfill(6)
+    pool_by_asof = pools.groupby("asof")["code"].apply(set).to_dict()
+    pool_asofs = sorted(pool_by_asof)
+
+    def pool_at(d):
+        cand = [a for a in pool_asofs if pd.Timestamp(a) <= d]
+        return pool_by_asof[cand[-1]] if cand else set()
+
     z = {f: expo.pivot(index="date", columns="code", values=f"z_{f}") for f in FACTORS}
     member = expo.groupby("date")["code"].apply(set).to_dict()
 
@@ -118,6 +127,11 @@ def csfm_tsfm_picks():
             if acc is None:
                 continue
             sc = (acc / np.sqrt(len(w))).dropna()
+            pm = pool_at(d)
+            if pm:
+                sc = sc[sc.index.isin(pm)]
+            if sc.empty:
+                continue
             top = sc.nlargest(N)
             if len(top) < N // 2:
                 continue
@@ -127,81 +141,76 @@ def csfm_tsfm_picks():
 
 
 def quality_picks():
-    """复现 backtest_quality15.py 的 v2 选股与反换手加权，季度频率"""
-    faq = pd.read_csv(os.path.join(D15, "faq_panel_2015.csv.gz"), dtype={"code": str},
-                      parse_dates=["EndDate", "pd"])
-    faq["code"] = faq["code"].astype(str).str.zfill(6)
-    pit = pd.read_csv(os.path.join(D15, "official_csi800_pit_2015.csv"), dtype=str)
-    pit["c"] = pit["code"].map(lambda x: x[2:] if x[:2] in ("sh", "sz") else x)
-    mem_by = pit.groupby("asof")["c"].apply(set).to_dict()
-    asofs = sorted(mem_by)
+    """质量Top28：按「信息可得日」调仓，候选池 = 当期股池（申万三级各取 FAQ 前 3）。
+
+    与旧口径的区别
+      旧：季度末交易日调仓，候选池 = 官方中证800 内按行业取前 5
+      新：报告披露完成次月首日（5/1、9/1、11/1）后的第一个交易日调仓，
+          候选池 = 当期股池（已按 300 亿市值 + 中证800∪中证1000 筛过）。
+    池内仍执行 v2 约束：行业 ≤ 2 只、20 日均成交额 ≥ 5000 万、按 20 日换手率反向加权。
+    """
+    pools = pd.read_csv(os.path.join(D15, "pools_v5.csv"), dtype={"code": str})
+    pools["code"] = pools["code"].str.zfill(6)
+    pools["grp"] = pools["sw3"].fillna("未分类")
+    by_asof = {a: g.copy() for a, g in pools.groupby("asof")}
 
     px = pd.read_pickle(os.path.join(D15, "px_daily.pkl"))
     px["code"] = px["code"].astype(str).str.zfill(6)
-    clo = px.pivot(index="date", columns="code", values="close").ffill(limit=250)
     amt = px.pivot(index="date", columns="code", values="amount").ffill(limit=250)
     vol = px.pivot(index="date", columns="code", values="volume")
-
-    # 季度末交易日：按日历季末取「不晚于该季末的最后一个交易日」。
-    # 不能像原来那样按 (年,季) 分组取 max —— 数据截止在季度中间时，
-    # 会把最后一个交易日（如 2026-10-16）当成一个季末，凭空多出一次调仓。
     trade = pd.DatetimeIndex(sorted(px["date"].unique()))
-    qe = pd.date_range("2014-12-31", trade[-1], freq="QE")
-    me = pd.DatetimeIndex([trade[trade <= q][-1] for q in qe if (trade <= q).any()])
-    me = me[me >= pd.Timestamp("2014-12-31")]
-    amt_ma = amt.rolling(20, min_periods=10).mean().reindex(me)
-    vol_ma = vol.rolling(20, min_periods=10).mean().reindex(me)
 
+    # 20 日均成交额 / 20 日换手率（换手率 = 成交量 / 股本）
+    amt_ma = amt.rolling(20, min_periods=10).mean()
+    vol_ma = vol.rolling(20, min_periods=10).mean()
     finp = pd.read_pickle(os.path.join(D15, "fin_pit.pkl"))
     sh = finp.sort_values("avail").drop_duplicates("code", keep="last").set_index("code")["shares"]
     turn20 = vol_ma * 100.0 / sh.reindex(vol_ma.columns)
     turn_med = turn20.median(axis=1)
 
     out = {}
-    for d in me:
-        cand = [a for a in asofs if pd.Timestamp(a) <= d]
-        if not cand:
+    for a in sorted(by_asof):
+        nxt = trade[trade > pd.Timestamp(a)]
+        if len(nxt) == 0:
             continue
-        mem = mem_by[cand[-1]]
-        f = faq[(faq["pd"] <= d) & (faq["code"].isin(mem)) & faq["FAQ_score"].notna()].copy()
-        if f.empty:
+        d = nxt[0]
+        ranked = by_asof[a].sort_values("FAQ_score", ascending=False)
+        if len(ranked) < TOP_N:
             continue
-        f = f.sort_values("pd").drop_duplicates("code", keep="last")
-        f["grp"] = f["sw3"].fillna("未分类")
-        pool = f.sort_values("FAQ_score", ascending=False).groupby("grp", sort=False).head(5)
-        if len(pool) < TOP_N:
-            continue
-        ranked = pool.sort_values("FAQ_score", ascending=False)
-        cnt, top2 = {}, []
+
+        a_row = amt_ma.loc[d] if d in amt_ma.index else None
+        cnt, picked = {}, []
         for _, r in ranked.iterrows():
             g = r["grp"]
             if cnt.get(g, 0) >= 2:
                 continue
-            a = amt_ma.loc[d].get(r["code"], np.nan) if d in amt_ma.index else np.nan
-            if not (a >= 5e7):
+            v = a_row.get(r["code"], np.nan) if a_row is not None else np.nan
+            if not (v >= 5e7):
                 continue
-            top2.append(r)
+            picked.append(r)
             cnt[g] = cnt.get(g, 0) + 1
-            if len(top2) >= TOP_N:
+            if len(picked) >= TOP_N:
                 break
-        if len(top2) < TOP_N:
-            got = {x["code"] for x in top2}
+        # 流动性约束过严时放宽（仍守行业 ≤2）
+        if len(picked) < TOP_N:
+            got = {x["code"] for x in picked}
             for _, r in ranked.iterrows():
-                if len(top2) >= TOP_N:
+                if len(picked) >= TOP_N:
                     break
                 if r["code"] in got or cnt.get(r["grp"], 0) >= 2:
                     continue
-                top2.append(r)
+                picked.append(r)
                 cnt[r["grp"]] = cnt.get(r["grp"], 0) + 1
-        codes = [x["code"] for x in top2]
+        if not picked:
+            continue
+
+        codes = [x["code"] for x in picked]
         tr = turn20.loc[d].reindex(codes).fillna(turn_med.loc[d]) if d in turn20.index else pd.Series(1.0, index=codes)
         tr = tr.clip(lower=tr.quantile(0.05) if tr.notna().any() else 1e-6)
         raw = 1.0 / (1.0 + tr / (tr.median() if tr.median() > 0 else 1.0))
-        w = raw / raw.sum()
-        out[d] = w
-    print(f"[Q28] {len(out)} 个季度调仓日", flush=True)
+        out[d] = raw / raw.sum()
+    print(f"[Q28] {len(out)} 个调仓日（信息可得日次一交易日）", flush=True)
     return out
-
 
 def main():
     px = pd.read_pickle(os.path.join(D15, "px_daily.pkl"))

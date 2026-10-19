@@ -47,7 +47,8 @@ def label_of(asof):
 
 
 def build_periods(name, mcap_panel):
-    p = pd.read_csv(os.path.join(OUT, "period_pools_2015_2026.csv"), dtype={"code": str})
+    # 股池唯一来源：build_pools_v5.py 的产物（35 期、申万三级各取 FAQ 前 3）
+    p = pd.read_csv(os.path.join(D15, "pools_v5.csv"), dtype={"code": str})
     p["code"] = p["code"].str.zfill(6)
     p["asof"] = pd.to_datetime(p["asof"])
     out = []
