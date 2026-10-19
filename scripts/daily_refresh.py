@@ -53,7 +53,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 # 路径与环境差异统一交给 scripts/paths.py：本机 Windows 与云端 Linux 共用一份代码，
 # 可用 POOL_BASE / MOM_OPT_DIR / WESTOCK_BIN / WB_LIBRARY_SKILL 等环境变量整体改写。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from paths import BASE, PY, WESTOCK as EXE, MOM_OPT, library_skill  # noqa: E402
+from paths import BASE, PY, WESTOCK as EXE, MOM_OPT, FIN_OUT, library_skill  # noqa: E402
 
 DATA = os.path.join(BASE, "data")
 PRICE_FILE = os.path.join(DATA, "prices_full_v2.csv")
@@ -82,6 +82,22 @@ GATE_FORBIDDEN = [
     "排名前 3 名各 16%",                   # 质量Top28 旧权重口径（说明段）
     "前 3 名各 16%，其余 25 只各 2.08%",   # 同上的图例/正文表述
 ]
+
+
+def page_engine():
+    """页面由哪条链路维护。
+
+    2026-10-19 起线上是「原版版式 + 2015-2026 新数据」（finchain 链路）：
+    页面结构一字未改，内容由 scripts/finchain/ 三步产出。
+    这里用 data/page_engine.txt 显式声明，避免再靠特征猜版式 ——
+    历史上就是因为靠猜，才把整页回退过两次。
+    """
+    p = os.path.join(DATA, "page_engine.txt")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return f.read().strip() or "legacy"
+    except OSError:
+        return "legacy"
 
 
 def page_gate(path):
@@ -440,31 +456,49 @@ def main():
         log("\n--no-page：已跳过页面生成与上传")
         return
 
-    log("\n=== 就地刷新页面数据区 ===")
-    run([PY, os.path.join(BASE, "scripts", "refresh_page.py")], timeout=1800)
-    log(f"页面已刷新：{PAGE_HTML}")
+    engine = page_engine()
+    keep_template = True
+    if engine == "finchain-v5":
+        # 原版版式 + 2015-2026 新数据：结构不动，只换内容。
+        # 走 finchain 三步（选股/净值 → 内容包 → 原位替换），不碰 data/page_base.html。
+        log("\n=== 重建页面（finchain：原版版式 + 2015-2026 新数据）===")
+        run([PY, os.path.join(BASE, "scripts", "finchain", "rebuild_page.py")], timeout=3600)
+        page_html = os.path.join(str(FIN_OUT), "pool_page_v5.html")
+        log(f"页面已重建：{page_html}")
+    else:
+        log("\n=== 就地刷新页面数据区 ===")
+        run([PY, os.path.join(BASE, "scripts", "refresh_page.py")], timeout=1800)
+        page_html = PAGE_HTML
+        log(f"页面已刷新：{page_html}")
+        keep_template = False
 
     if args.no_import:
         log("\n--no-import：已跳过上传")
         return
 
     log("\n=== 上传资料库 ===")
-    gate = page_gate(PAGE_HTML)
+    gate = page_gate(page_html)
     if gate:
         raise SystemExit(
             "页面完整性门禁未通过，已拒绝上传（线上保持原状）：\n  " + gate
             + "\n  → 多半是 data/page_base.html 模板与线上版式不一致。"
               "先跑 python3 cloud/seed_page_base.py --force 重新拉取线上模板。")
-    out = run([PY, str(library_skill() / "page" / "import_html.py"), PAGE_HTML,
+    out = run([PY, str(library_skill() / "page" / "import_html.py"), page_html,
                "--node-block-id", PAGE_NODE], timeout=1800)
     line = [l for l in out.splitlines() if "KS_IMPORT_OK" in l]
     if not line:
         raise SystemExit("上传失败，未见到 KS_IMPORT_OK")
     log(line[0].strip())
 
-    # 上传成功 → 本产物即为线上最新版，回写为明天的刷新模板
+    if keep_template:
+        # finchain 链路的模板必须保持「干净原版」：patch_page 每次都从它出发，
+        # 回写已替换过的产物会导致下次在旧内容上二次替换。故不回写。
+        log("模板保持干净原版（finchain 不回写 data/page_base.html）")
+        return
+
+    # 旧链路：本产物即为线上最新版，回写为明天的刷新模板
     import shutil
-    shutil.copyfile(PAGE_HTML, os.path.join(DATA, "page_base.html"))
+    shutil.copyfile(page_html, os.path.join(DATA, "page_base.html"))
     log("已回写刷新模板：data/page_base.html")
 
 

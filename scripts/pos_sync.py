@@ -78,6 +78,9 @@ def main():
            os.path.join(HERE, "..", "data", "fbook_monthly.csv")]
     ap.add_argument("--fbook", default=next((p for p in _fb if os.path.exists(p)), _fb[0]))
     ap.add_argument("--out", default="")
+    # 仓位序列的起点：中证2000 指数（idx_932000）与持仓加权 F（fbook_monthly）
+    # 都只有 2018 年以后的数据，回测曲线虽从 2015 起，仓位只能从这里开始算。
+    ap.add_argument("--pos-start", default="2019-05-06")
     ap.add_argument("--upload", action="store_true")
     ap.add_argument("--publish", action="store_true")
     a = ap.parse_args()
@@ -104,7 +107,13 @@ def main():
     i = h.find("var BT=") + len("var BT=")
     j = h.find(";;", i)
     bt = json.loads(h[i:j])
-    dates = pd.to_datetime(bt["dates"])
+    raw = pd.DatetimeIndex(pd.to_datetime(bt["dates"]))
+    sel = raw >= pd.Timestamp(a.pos_start)
+    dates = raw[sel]
+    nav_cs = [v for v, k in zip(bt["series"]["因子动量CSFM"], sel) if k]
+    nav_ts = [v for v, k in zip(bt["series"]["因子动量TSFM"], sel) if k]
+    log("  仓位序列窗口 %s ~ %s（%d 个交易日）"
+        % (dates[0].date(), dates[-1].date(), len(dates)))
 
     # ---- 持仓加权 F（月度，来自本金/云端同口径）
     fbook = None
@@ -113,7 +122,7 @@ def main():
         col = fb.columns[0]
         fbook = fb[col]
         log("  fbook 覆盖 %s ~ %s，%d 个月" % (fbook.index.min().date(), fbook.index.max().date(), len(fbook)))
-    pos = positions_from_nav(dates, bt["series"]["因子动量CSFM"], bt["series"]["因子动量TSFM"], fbook)
+    pos = positions_from_nav(dates, nav_cs, nav_ts, fbook)
 
     # ---- 指数序列：本地 csv 优先，缺失时保留页面里的旧值
     zz = cyb = None

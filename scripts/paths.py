@@ -70,12 +70,39 @@ PROF_DIR = _sibling("PROF_DIR")
 POOL_DATA = _sibling("POOL_DATA_DIR")
 AFGI_DIR = _sibling("AFGI_DIR")
 
+# ---------------------------------------------------------------------------
+# 财报链（finchain）：四表 / 行情 / 中间面板 / 回测产物
+# ---------------------------------------------------------------------------
 # 「官方中证800 口径」的数据侧工作区：build_page_data.py 与 out15/ 产物所在目录。
 # 页面渲染本身不依赖它（只吃 page_data.json），仅 --pack 时用来重跑数据打包。
 WORK15 = Path(os.environ.get("POOL15_DIR") or (
     r"C:\Users\12066\WorkBuddy\2026-10-19-13-04-18\work"
     if os.name == "nt" else POOL_DATA / "work"
 ))
+
+# 原始数据源在 Windows 上仍指向 qmj_fraud 工程（保证本机行为不变）；
+# 云端统一落在 pool-core/data/finchain/ 下，由 cloud/fin_bootstrap.sh 冷启动重建。
+# 注意：qmj_fraud 的路径含空格，必须用原始字符串，不能拼 Path 运算。
+_QF_WIN = r"C:\Users\12066\WorkBuddy AI\2026-10-17-22-12-47\qmj_fraud\data"
+
+FIN_ROOT = Path(os.environ.get("FINCHAIN_DIR") or (DATA / "finchain"))
+FIN_FUND = Path(os.environ.get("FIN_FUND_DIR") or (
+    Path(_QF_WIN) / "fund" if os.name == "nt" else FIN_ROOT / "fund"))
+FIN_PX = Path(os.environ.get("FIN_PX_DIR") or (
+    Path(_QF_WIN) / "px" if os.name == "nt" else FIN_ROOT / "px"))
+FIN_MON = Path(os.environ.get("FIN_MON_DIR") or (
+    Path(_QF_WIN) / "mon" if os.name == "nt" else FIN_ROOT / "mon"))
+FIN_SW = Path(os.environ.get("FIN_SW_FILE") or (
+    Path(_QF_WIN) / "sw3_map.csv" if os.name == "nt" else FIN_ROOT / "sw3_map.csv"))
+# 中间面板（px_daily.pkl / fin_pit.pkl / 因子暴露）与回测产物
+FIN_D15 = Path(os.environ.get("FIN_D15_DIR") or (
+    WORK15 / "data15" if os.name == "nt" else FIN_ROOT / "data15"))
+FIN_OUT = Path(os.environ.get("FIN_OUT_DIR") or (
+    WORK15 / "out15" if os.name == "nt" else FIN_ROOT / "out15"))
+# 行业映射（sw1/sw2/sw3），随代码入库
+FIN_META = SCRIPTS / "meta.json"
+# 渲染器读取的数据包（由 build_page_data.py 产出，入库）
+PAGE_DATA = DATA / "page_data.json"
 
 # 常用产物
 PAGE_BASE = DATA / "page_base.html"
@@ -124,3 +151,10 @@ if __name__ == "__main__":
     print(f"POOL_DATA = {POOL_DATA}")
     print(f"AFGI_DIR  = {AFGI_DIR}")
     print(f"WORK15    = {WORK15}")
+    print(f"FIN_ROOT  = {FIN_ROOT}")
+    print(f"FIN_FUND  = {FIN_FUND}")
+    print(f"FIN_PX    = {FIN_PX}")
+    print(f"FIN_MON   = {FIN_MON}")
+    print(f"FIN_SW    = {FIN_SW}")
+    print(f"FIN_D15   = {FIN_D15}")
+    print(f"FIN_OUT   = {FIN_OUT}")

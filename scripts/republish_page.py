@@ -1,32 +1,19 @@
 # -*- coding: utf-8 -*-
-"""季度股池页的「全量重发布」入口 —— 替代已失效的 refresh_page.py（旧版式锚点替换）。
+"""【已废弃 2026-10-19】季度股池页的「数据包 + 整页重绘」入口。
 
-为什么换机制
-------------
-线上页面在 2026-10-19 换成「数据包 + 整页重绘」结构：净值全靠内联 JS 现画，股池按
-行业分组嵌套渲染。``refresh_page.py`` 依赖的 ``var BT=`` / ``svg#btChart`` / ``td#r{i}_{c}``
-一个都不存在了，它自己会报「var BT= 出现 0 次，已中止」并**不写文件**（这点是好的：
-不会静默把新页面改回旧版），但也意味着季度更新彻底断链。
+为什么废弃
+----------
+这条链路会把页面**整页重绘成新结构**（净值全靠内联 JS 现画、股池按行业嵌套）。
+2026-10-19 用户明确否决："不要动 UI 细节，严格按照要求替换内容"。
+现网版本是「原版版式 + 2015-2026 新数据」，由 :mod:`scripts.finchain` 维护：
 
-新机制把链路拆成四段，每段都能单独跑、单独验：
+    python scripts/finchain/rebuild_page.py [--upload] [--publish]
 
-    ① pack    数据侧产出 page_data.json（只读 CSV → 单一 JSON 契约）
-    ② render  只吃 JSON，整页重绘      —— 可在云端独立运行，不必带 CSV
-    ③ verify  结构 / 脚本 / 数据三层真跑 —— 任一失败即拒绝上传
-    ④ upload  import_html 覆写固定节点，可选 publish 同步外部网页
+本文件保留只为留档，**直接运行会退出码 9 并拒绝做事** ——
+防止任何残留调用（旧 cron、旧文档、旧习惯）把线上页面重绘回被否决的结构。
+若要恢复旧链路，先把下面 ALLOW_LEGACY 打开，并确认那确实是你要的。
 
-用法::
-
-    # 只验证，不碰线上（默认）
-    python scripts/republish_page.py
-
-    # 本机：重跑数据打包 → 渲染 → 验证 → 上传 → 发布
-    python scripts/republish_page.py --pack --upload --publish
-
-    # 云端：只拿到数据包时
-    python scripts/republish_page.py --data data/page_data.json --upload --publish
-
-退出码：0 成功 / 2 数据包缺失 / 3 验证失败 / 4 上传失败 / 5 发布失败
+退出码：9 已废弃 / 2 数据包缺失 / 3 验证失败 / 4 上传失败 / 5 发布失败
 """
 from __future__ import annotations
 
@@ -42,6 +29,15 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS)
 from paths import BASE, DATA, WORK15, library_skill  # noqa: E402
+
+# ── 废弃开关：默认拒绝执行 ────────────────────────────────────────────
+# 放在 pagegen 导入之前 —— 连模块都不加载，任何残留调用都跑不起来。
+if os.environ.get("POOL_ALLOW_LEGACY_REDRAW") != "1":
+    sys.stderr.write(
+        "republish_page.py 已于 2026-10-19 废弃：它会整页重绘成用户已否决的新结构。\n"
+        "  现网页面请用：python scripts/finchain/rebuild_page.py --upload --publish\n"
+        "  确实需要旧链路：先 export POOL_ALLOW_LEGACY_REDRAW=1\n")
+    raise SystemExit(9)
 
 from pagegen.render import build  # noqa: E402
 from pagegen.verify import print_report, verify  # noqa: E402

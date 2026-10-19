@@ -8,13 +8,12 @@
 #   bash cloud/quarterly.sh                  # 自动推断报告期
 #   bash cloud/quarterly.sh --period 2026-09-30
 #   bash cloud/quarterly.sh --no-fetch       # 跳过财报抓取
-#   PAGE=1 bash cloud/quarterly.sh           # 额外把页面重发布到线上节点
-#   PAGE=1 PAGE_DATA=/path/page_data.json bash cloud/quarterly.sh
+#   PAGE=1 bash cloud/quarterly.sh           # 额外把页面重建并发布到线上节点
 #
 # 环境变量：
-#   PAGE=1        数据侧完成后，调用 pool-core/scripts/republish_page.py
-#                 做「渲染 + 三层验证 + 覆写节点 + 发布外部网页」。默认关闭。
-#   PAGE_DATA     数据包路径，默认 $PDATA_DIR/data/page_data.json
+#   PAGE=1        数据侧完成后，调用 pool-core/scripts/finchain/rebuild_page.py
+#                 做「选股/净值 → 内容包 → 原位替换 → 门禁 → 覆写节点 → 发布」。
+#                 页面结构沿用原版，只换内容。默认关闭。
 #
 # 退出码：0 成功 / 7 git 失败 / 其它 = update_latest.py 自身失败码
 #        （页面重发布失败只 warn，不改变退出码 —— 数据侧成功就算成功，页面可单独重跑）
@@ -49,27 +48,21 @@ if [[ $rc -ne 0 ]]; then
   exit $rc
 fi
 
-# ------- 页面重发布（新结构） -------
-# 线上页面自 2026-10-19 起是「数据包 + 整页重绘」结构，旧的 refresh_page.py 锚点替换
-# 已不适用（它会自己识别为 v4 并跳过）。页面更新统一走 pool-core 的 republish_page.py：
-#   page_data.json → 渲染 → 三层验证 → import_html 覆写固定节点 → publish 同步外部网页。
+# ------- 页面重发布（原版版式 + 2015-2026 新数据） -------
+# 2026-10-19 起页面结构不动，只换内容：走 pool-core 的 scripts/finchain/：
+#   daily_nav15.py 选股/净值 → pack_page.py 内容包 → patch_page.py 原位替换
+#   → 门禁 → import_html 覆写固定节点 → publish 同步外部网页。
+# 整页重绘链路（republish_page.py / pagegen）已废弃，会拒绝执行。
 #
-# 默认不跑：需要数据侧先产出 page_data.json（PAGE_DATA 可指定路径），
-# 且发布动作对线上是覆盖式的，故要求显式 PAGE=1。
+# 默认不跑：发布动作对线上是覆盖式的，要求显式 PAGE=1。
 if [[ "${PAGE:-0}" == "1" ]]; then
-  PAGE_DATA="${PAGE_DATA:-$PDATA_DIR/data/page_data.json}"
-  if [[ ! -f "$PAGE_DATA" ]]; then
-    warn "PAGE=1 但数据包不存在：$PAGE_DATA（先产出 page_data.json，或用 PAGE_DATA 指定）"
+  log "===== 页面重建：节点 $PAGE_NODE ====="
+  if ( cd "$POOL_DIR" && "$PY" scripts/finchain/rebuild_page.py --upload --publish ); then
+    log "===== 页面重建完成 ====="
   else
-    log "===== 页面重发布：$PAGE_DATA → 节点 $PAGE_NODE ====="
-    if ( cd "$POOL_DIR" && "$PY" scripts/republish_page.py \
-           --data "$PAGE_DATA" --node-id "$PAGE_NODE" --upload --publish ); then
-      log "===== 页面重发布完成 ====="
-    else
-      # 页面失败不回滚数据侧：数据已经落盘，页面可单独重跑
-      warn "页面重发布失败（数据侧已完成）。可单独重跑："
-      warn "  cd $POOL_DIR && $PY scripts/republish_page.py --data $PAGE_DATA --upload --publish"
-    fi
+    # 页面失败不回滚数据侧：数据已经落盘，页面可单独重跑
+    warn "页面重建失败（数据侧已完成）。可单独重跑："
+    warn "  cd $POOL_DIR && $PY scripts/finchain/rebuild_page.py --upload --publish"
   fi
 fi
 

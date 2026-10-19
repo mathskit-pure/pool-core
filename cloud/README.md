@@ -29,24 +29,30 @@
 
 ### 页面更新走哪条路（重要）
 
-线上季度股池页自 2026-10-19 起是**「数据包 + 整页重绘」**结构：净值全靠内联 JS 现画，
-股池按行业分组嵌套渲染，页面里没有 `var BT=` / `svg#btChart` / `td#r{i}_{c}` 这些老锚点。
+线上季度股池页 = **原版版式 + 2015-2026 新数据**：结构、样式、交互、图表 JS 全部沿用原版，
+只是把说明文字、35 期股池、三个组合的回测/调仓数据换成了新口径。页面里仍有
+`var BT=` / `svg#btChart` / `td#r{i}_{c}` 这些老锚点，靠 `<!--page-engine:finchain-v5-->` 标记区分。
 
 | 脚本 | 适用结构 | 现状 |
 |---|---|---|
-| `scripts/republish_page.py` + `scripts/pagegen/` | 新结构（v4） | **当前唯一可用**，季度更新走这里 |
-| `scripts/refresh_page.py` | 旧结构（v2/v3） | 已加版式守卫：识别到 v4 会打印提示并**跳过（退 0）**，不会误报失败，也不会把页面改回旧版 |
+| `scripts/finchain/rebuild_page.py` | 原版版式 + 新数据（v5） | **当前唯一可用**，季度/每日页面更新走这里 |
+| `scripts/refresh_page.py` | 旧结构（v2/v3） | 已加版式守卫：识别到 v4/v5 会打印提示并**跳过（退 0）** |
+| `scripts/republish_page.py` + `scripts/pagegen/` | 整页重绘（v4） | **已废弃**：默认退 9 拒绝执行（用户否决了改版 UI） |
 
-`republish_page.py` 的四段是分开的，任何一段都能单跑：
+`rebuild_page.py` 三步可单独跑：
 
 ```
-data/page_data.json ──render──> data/pool_page.html ──verify──> import_html ──> publish
+daily_nav15.py ──> out15/page_content.json ──> pool_page_v5.html ──门禁──> import_html ──> publish
 ```
 
-- `render` 只吃 `page_data.json`，不碰任何 CSV —— 云端只要拿到数据包就能独立出页面；
-- `verify` 做**结构 / 脚本 / 数据**三层检查，其中数据层会用净值曲线反算年化·波动·夏普
-  与绩效表互校；任一失败即拒绝上传（`--force` 才会强上）；
-- `python scripts/pagegen/selftest.py` 是验证器自己的回归：注入 6 个故障，确认每层都真的会拦。
+- `daily_nav15.py` 复现 CSFM/TSFM/质量Top28 选股，再把月度/季度持仓用「份额自然漂移」展开成**逐日净值**
+  （页面图表按交易日计算，月度净值喂不进去）；
+- `pack_page.py` 打包内容，六条曲线统一在 2015-02-27 归一到 1.00；
+- `patch_page.py` 在 `data/page_base.html` **原位替换**内容，不新增/删除任何标签结构；
+- 上传前跑与 `daily_refresh.py` 同一套门禁，缺区块或命中旧口径特征即拒绝上传（线上保持原状）。
+
+**`data/page_base.html` 是干净原版模板，finchain 链路不回写它** —— 每次都从它出发，
+回写会导致下一次在已替换内容上二次替换。页面引擎由 `data/page_engine.txt`（值 `finchain-v5`）显式声明。
 
 AFGI 由 **独立的云端任务**负责（它自己有 `cloud/daily.sh`），不在这里。
 

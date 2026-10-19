@@ -9,6 +9,10 @@ data/*
 # page_data.json 是季度股池页的唯一输入（渲染器只吃它，不读 CSV）。
 # 入库后云端只需替换这一个文件即可重发布，不必重建整条财报链。
 !data/page_data.json
+# page_engine.txt 声明页面由哪条链路维护（finchain-v5）。
+# 必须入库：云端靠它决定走 scripts/finchain/rebuild_page.py，
+# 而不是已废弃的整页重绘链路。缺了会被当成 legacy。
+!data/page_engine.txt
 
 output/
 .workbuddy/

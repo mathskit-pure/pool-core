@@ -450,6 +450,10 @@ V3_SIGNS = ('id="posChart"', "四、CSFM 和 TSFM 历史仓位建议")
 # v4 = 2026-10-19 起的新结构（数据包 + 整页重绘）：没有 var BT=、没有 svg#btChart，
 # 净值全靠内联 JS 现画。本脚本的所有锚点都不存在，必须交棒给 scripts/republish_page.py。
 V4_SIGNS = ('id="chart"', 'id="rng"', 'var D={"curve"', "申万三级行业各取前 5")
+# v5 = 原版版式 + 2015-2026 新数据（官方中证800 逐期成分口径）。
+# 结构与 v3 一模一样，靠这个显式标记区分 —— 否则下面的 v3 分支会拿 pool-core
+# 自己的旧净值（2019-05 起、市值拟合股池）覆盖线上曲线与持仓表。
+V5_MARK = "<!--page-engine:finchain-v5-->"
 V3_LOCAL_KEYS = ("质量Top28组合",)
 QUAL_STAT_ROW = 2                 # 统计表里质量Top28 的行号（r2_*）
 QUAL_ANCHOR_V3 = r"5\.3[\s\u3000]*质量Top28组合"
@@ -458,6 +462,8 @@ QUAL_NEXT_V3 = r"5\.4[\s\u3000]"
 
 def detect_layout(html):
     """v4 = 数据包+整页重绘（新结构）；v3 = 含仓位建议模块；否则旧版式 v2。"""
+    if V5_MARK in html:
+        return "v5"
     if all(s in html for s in V4_SIGNS):
         return "v4"
     return "v3" if all(s in html for s in V3_SIGNS) else "v2"
@@ -1160,7 +1166,8 @@ def main():
     log("模板：%s（%s chars）" % (args.base, f"{len(html):,}"))
 
     layout = detect_layout(html)
-    _what = {"v4": "v4 = 数据包 + 整页重绘（新结构），本脚本不适用",
+    _what = {"v5": "v5 = 原版版式 + 2015-2026 新数据（finchain 链路），本脚本不适用",
+             "v4": "v4 = 数据包 + 整页重绘（新结构），本脚本不适用",
              "v3": "v3 = CSFM/TSFM + 四、仓位建议 + 质量Top28 v2，只刷新质量Top28",
              "v2": "v2 = 动量轮动版式，整页数据区重建"}
     log("版式：%s（%s）" % (layout, _what.get(layout, layout)))
@@ -1169,9 +1176,9 @@ def main():
     # 继续跑只会撞在下面的「var BT= 出现 0 次」防呆上、把每日任务标成失败。
     # 这里明确交棒：新结构的更新走 scripts/republish_page.py（数据包 → 整页重绘）。
     # 退 0 而不是退错 —— 它不是"坏了"，而是"不该由它做"。
-    if layout == "v4":
-        log("  → 线上已是新结构，跳过本脚本（不写文件）。")
-        log("  → 页面更新请用：python scripts/republish_page.py --upload --publish")
+    if layout in ("v4", "v5"):
+        log("  → 线上页面由 finchain 新数据链路维护，跳过本脚本（不写文件）。")
+        log("  → 页面更新请用：python scripts/finchain/rebuild_page.py --upload --publish")
         return 0
 
     html = apply_renames(html)
