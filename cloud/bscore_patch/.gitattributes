@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.py text eol=lf
+template_v23.html -text
+_run/ export-ignore
