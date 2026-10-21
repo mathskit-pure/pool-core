@@ -109,7 +109,8 @@ def hs300_daily(dates):
             df.columns = ["date"] + [f"c{i}" for i in range(df.shape[1] - 1)]
             df["date"] = pd.to_datetime(df["date"])
             s = df.set_index("date")["c0"].astype(float).dropna().sort_index()
-            if len(s) > 250 and s.index[-1] >= dates[-1] - pd.Timedelta(days=45):
+            # 本地/云端都可能有几天滞后：落后不超过 7 天就用它，否则回退 akshare 取更快的日线
+            if len(s) > 250 and s.index[-1] >= pd.Timestamp.today() - pd.Timedelta(days=7):
                 return s, "bench_all.csv"
         except Exception as e:
             log(f"bench_all.csv 不可用：{e!r}")
