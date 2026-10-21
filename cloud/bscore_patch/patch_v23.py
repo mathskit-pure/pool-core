@@ -241,6 +241,33 @@ def patch_trigger(html: str, vals: dict):
     return html[:i] + seg + html[j:], True
 
 
+RANGES = {
+    # field: (下限, 上限, 是否含端点)
+    "bm_cur": (0.0, 1.0), "bm_hist": (0.0, 1.0), "pb_pct": (0.0, 1.0),
+    "cb": (0.0, 1.0), "trig_bm": (0.0, 1.0),
+    "pb_value": (0.01, 50.0), "weighted_pb": (0.01, 50.0), "trig_pb": (0.01, 50.0),
+    "broken_pct": (0.0, 100.0),
+    "hs300_close": (100.0, 100000.0), "zz500_close": (100.0, 100000.0), "zz1000_close": (100.0, 100000.0),
+    "trig_hs300": (100.0, 100000.0),
+    "hs300_chg": (-100.0, 100.0), "zz500_chg": (-100.0, 100.0), "zz1000_chg": (-100.0, 100.0),
+    "hs300_dd": (-100.0, 100.0), "zz500_dd": (-100.0, 100.0), "zz1000_dd": (-100.0, 100.0),
+    "sample_n": (100.0, 20000.0),
+}
+
+
+def check_range(field: str, v: float):
+    """越界返回错误描述；用于拦住「取错字段」这类静默错误。"""
+    lo, hi = RANGES.get(field, (None, None))
+    if lo is None:
+        return None
+    # 百分位型字段允许被写成 0~100 的百分数，pctile() 会统一回 0~1
+    if field in PCTILE_FIELDS and 1.5 < v <= 100.0:
+        return None
+    if not (lo <= v <= hi):
+        return f"{field}={v} 不在 [{lo}, {hi}]"
+    return None
+
+
 def read_last_csv_row(path: str):
     """读 cb_history.csv 最后一行，作为 latest.json 缺字段时的兜底源。
 
@@ -344,7 +371,7 @@ def main() -> None:
     latest = json.loads(Path(a.latest).read_bytes().decode("utf-8"))
     hist_row, hist_n = ({}, None) if not a.history else read_last_csv_row(a.history)
 
-    vals, prov, missing, src = {}, {}, [], {}
+    vals, prov, missing, src, out_of_range = {}, {}, [], {}, []
     for f in FIELD_KEYS:
         raw, path = resolve(latest, f)
         origin = "latest.json"
@@ -364,6 +391,10 @@ def main() -> None:
         num = as_float(raw)
         if num is None:
             missing.append(f)
+            continue
+        bad = check_range(f, num)
+        if bad:
+            out_of_range.append(bad)
             continue
         vals[f] = fmt(f, num)
         prov[f] = {"value": raw, "key": path, "from": origin}
@@ -386,8 +417,10 @@ def main() -> None:
                           "resolved_from": src}, ensure_ascii=False))
         return
 
-    if missing:
-        print(json.dumps({"ok": False, "reason": "字段未解析到", "missing": missing}, ensure_ascii=False), file=sys.stderr)
+    if missing or out_of_range:
+        print(json.dumps({"ok": False, "reason": "字段未解析到或数值越界",
+                          "missing": missing, "out_of_range": out_of_range},
+                         ensure_ascii=False), file=sys.stderr)
         sys.exit(2)
 
     html, done = tpl, {}
