@@ -375,6 +375,10 @@ B-score 口径：CB ＝（市值加权 PB 便宜度分位 ＋ 等权 PB 便宜�
 现版本直接采用股池页发布的质量Top28 净值（两页数字同源）、逐月重算、四种搭配同表对比，
 出图前强制断言每条曲线至少有 12 个不同取值。
 </div>
+<div class="sub" style="margin-top:20px">
+本页底座信号（CB / 分位 / 破净率）由 bscore 每日任务生成；组合模块由
+pool-core/cloud/bscombo/rebuild_bscombo.py 自动维护（2026-10-21 口径修订）。
+</div>
 </div>
 '''
     return front, back
@@ -595,7 +599,7 @@ def main():
         log(r.stdout.decode("utf-8", "replace").strip()[-160:])
 
     print("BSCOMBO_OK " + json.dumps({
-        "asof": asof, "pos": round(pos_now, 2), "cb": cb_txt,
+        "asof": asof, "pos": round(pos_now, 2), "cb": cur["cb"],
         "designs": {x["name"]: {k: (round(v, 4) if isinstance(v, float) else v)
                                   for k, v in x["stats"].items()} for x in designs},
     }, ensure_ascii=False))
