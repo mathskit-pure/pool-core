@@ -15,10 +15,14 @@ log() { printf '[patch_v23] %s\n' "$*"; }
 
 # ---------- 1. 定位资料库 skill 脚本 ----------
 find_skill() {
-  local name="$1"
-  local p
-  p="$(find /root /home /workspace -name "$name" -path "*library*" 2>/dev/null | head -1)"
-  printf '%s' "$p"
+  local name="$1" p
+  for p in "/root/.codebuddy/skills/library/page/$name" \
+           "/root/.codebuddy/skills/library/drive/$name" \
+           "$HOME/.codebuddy/skills/library/page/$name"; do
+    [ -f "$p" ] && { printf '%s' "$p"; return; }
+  done
+  # 兜底：只在 /root 与 /home 里找，跳过 /workspace（那里有几十 MB 的缓存，扫起来慢）
+  timeout 20 find /root /home -name "$name" -path "*library*" 2>/dev/null | head -1
 }
 IMPORT_HTML="$(find_skill import_html.py)"
 DOWNLOAD="$(find_skill download_page_artifacts.py)"
@@ -62,8 +66,8 @@ PY
 fi
 
 # ---------- 3. 数据源 ----------
-LATEST="/workspace/bscore/data/latest.json"
-HIST="/workspace/bscore/data/cb_history.csv"
+LATEST="${BSCORE_LATEST:-/workspace/bscore/data/latest.json}"
+HIST="${BSCORE_HIST:-/workspace/bscore/data/cb_history.csv}"
 [ -f "$LATEST" ] || { log "缺少 $LATEST，不刷新页面"; exit 3; }
 
 # 月频 CB 序列（用于重绘第四章）：按候选名探测，找不到就保留原图
@@ -86,6 +90,10 @@ if [ $RC -ne 0 ]; then
 fi
 
 # ---------- 5. 写回页面 ----------
+if [ "${PATCH_DRY:-0}" = "1" ]; then
+  log "PATCH_DRY=1，跳过写回；产物 $WORK/out.html（$(stat -c%s "$WORK/out.html") 字节）"
+  exit 0
+fi
 if [ -z "$IMPORT_HTML" ]; then
   log "找不到 import_html.py，无法写回；已生成 $WORK/out.html"
   exit 1
