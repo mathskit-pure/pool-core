@@ -112,24 +112,3 @@ GIT_PULL=1 bash cloud/quarterly.sh
 | `GITHUB_USER` | `mathskit-pure` | 仓库所在账号 |
 | `WB_LIBRARY_SKILL` | 自动探测 | 资料库 skill 路径（含 `page/import_html.py`） |
 | `WESTOCK_BIN` | Windows `westock.exe` / Linux `westock` | 行情 CLI 路径 |
-
-## B-score 看板的组合模块（cloud/bscombo/）
-
-`A股B-score择时信号看板`（节点 `VLeP5CSpUchSY3qawGq88W`）由两段组成：
-底座看板（`/workspace/bscore/src/daily_update.py` 生成）= CB 读数与信号；
-组合模块（本目录脚本）= 质量Top28 × 择时信号的搭配、回测对比、持仓与建议仓位。
-
-```bash
-python3 cloud/bscombo/rebuild_bscombo.py            # 重算 → 回写页面 → 重新发布
-python3 cloud/bscombo/rebuild_bscombo.py --dry-run  # 只算不改页面
-```
-
-口径（2026-10-21 修订，替换旧的 `/workspace/bscombo/update_bscombo.py`）：
-
-- 净值直接取 `data/page_data.json` 里股池页发布的质量Top28 v2 序列，两页数字同源；
-- 仓位＝`0.3 + 0.7 × 1[沪深300 > 月线 MA10]`，月末决定、下月生效；
-- CB 从「仓位主控」降级为「风险提示阀」：仅在 CB<0.15（极贵）时把仓位再打 5 折；
-- 出图前断言每条曲线 ≥12 个不同取值，防止再出现「250 个点同一高度」的假曲线。
-
-失效背景：旧口径 `clip((CB−0.354)/0.45)` 在 2015-2026 全样本把夏普从 0.58 压到 0.18、
-年化从 11.6% 压到 1.6% —— 估值分位砍掉的是上涨段，挡不住下跌段。

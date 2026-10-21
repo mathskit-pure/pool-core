@@ -222,29 +222,3 @@ cd /workspace/pool-core && GIT_PULL=1 bash cloud/pos_daily.sh
 **fbook_monthly.csv 怎么来**：由本机 `fmf` 工程（因子动量 × F 反馈强度）在每个调仓日重算后
 提交到 pool-core 仓库；云端只读。F 门控是月频量，月中不需要更新。
 
-
----
-
-## 6 号｜B-score 看板的组合模块（每日，紧跟 1 号/独立 T+1 链路）
-
-> 页面节点 `VLeP5CSpUchSY3qawGq88W`。底座看板由 `/workspace/bscore/src/daily_update.py`
-> 生成（CB 读数与信号），组合模块由 `cloud/bscombo/rebuild_bscombo.py` 生成。
-> **旧的 `/workspace/bscombo/update_bscombo.py` 已废弃**：它把净值曲线的 250 个点填成同一数值、
-> 两行对比基准留空、用当期股池回溯历史（前视偏差），2026-10-21 起不再调用。
-
-**建议调度**：与 B-score 每日更新同一任务内串行执行（先 import 底座页面，再跑组合模块）。
-
-**执行命令**：
-
-```bash
-cd /workspace/pool-core && (git fetch -q && git merge --ff-only -q || true)
-python3 /workspace/pool-core/cloud/bscombo/rebuild_bscombo.py
-```
-
-**依赖**：`data/page_data.json`（股池页数据包，已入库）、`data/bench_all.csv`（沪深300，缺失自动回退 akshare）、
-akshare（PB 历史）。脚本自己回写节点并调用 `cloud/publish_pages.py ONLY=BSCORE` 重新发布。
-
-**口径**：仓位 = 0.3 + 0.7 × 1[沪深300 > 月线 MA10]，月末决定、下月生效；CB 仅作风险提示阀
-（≤0.15 极贵时把仓位再打 5 折）。四种搭配（满仓 / 趋势闸门 / CB 旧口径 / 趋势×CB）同表对比。
-
-**自检**：脚本在出图前断言每条曲线 ≥12 个不同取值、对比表无整行「—」，任一不满足即中止不上传。

@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""重建「A股B-score择时信号看板」的组合模块（修正版）。
+"""质量Top28 × 择时信号的搭配回测（离线研究脚本，不读写任何页面）。
 
-为什么重写
-----------
-旧链路（/workspace/bscombo/update_bscombo.py 那套补丁）有三处硬伤，2026-10-21 查明：
-  1. 净值曲线退化：250 个点全部落在同一高度（值恒为末值），图例写「起点 1 → 末值 0.9013」，
-     曲线本身却是一条直线 —— 画图的数组被填成了常数。
+背景
+----
+2026-10-21 排查发现「A股B-score择时信号看板」的组合模块有三处硬伤：
+  1. 净值曲线退化：250 个点全部落在同一高度，图例却写「起点 1 → 末值 0.9013」。
   2. 两行对比基准（质量Top30 不择时、沪深300）整行是「—」，无从判断择时是否加分。
-  3. 指标与仓位不自洽：报「平均仓位 6.5% ＋ 累计 −9.87%」，反推标的需要跌约 150%，
+  3. 指标与仓位不自洽：报「平均仓位 6.5% ＋ 累计 −9.87%」，反推标的需跌约 150%，
      而同期质量Top28 实际 +94%；且用「当期股池」回溯过去两年属前视偏差。
 
-本脚本的口径
-------------
-  · 组合核心＝股池页发布的质量Top28 净值（data/page_data.json 的 curve.series，
-    与股池页面上的数字逐点一致），不自己重造行情，避免两页口径打架。
+本脚本只用来自查口径、对 Top28 做搭配回测，**不修改资料库页面**（用户要求 UI 保持原样）。
+它把统计与逐月净值写成 JSON，交给本地报告脚本渲染。
+
+口径
+----
+  · 组合核心＝股池页发布的质量Top28 v2 净值（data/page_data.json 的 curve.series），
+    与股池页面数字同源，不自己重造行情。
   · 择时信号：
       A. 趋势闸门（推荐）＝ 0.3 + 0.7 × 1[沪深300 > 月线 MA10]
       B. CB 估值择时（旧口径，对照）＝ clip((CB − 0.354) ÷ 0.45, 0, 1)
       C. 趋势闸门 × CB 微调 ＝ 趋势仓位 × (0.7 + 0.3·CB)
-  · 仓位在月末决定、下月生效（无未来函数）；样本 2015 → 最新。
-  · 出图前断言每条曲线至少有 12 个不同取值，杜绝再把直线画上线。
-  · 只改页面里的组合模块，不动看板基础区块（CB 读数、KPI、信号说明）。
+  · 仓位在月末决定、下月生效（无未来函数），单边 10bp 成本，现金零收益。
 
 用法
 ----
-    python3 cloud/bscombo/rebuild_bscombo.py                 # 下载→重算→回写→发布
-    python3 cloud/bscombo/rebuild_bscombo.py --dry-run       # 只算不改页面
-    python3 cloud/bscombo/rebuild_bscombo.py --html-in a.html --html-out b.html   # 本地离线验证
+    python3 research/bscombo/backtest_v28.py --json-out out.json   # 写 JSON
+    python3 research/bscombo/backtest_v28.py                       # 直接打印统计
 """
 from __future__ import annotations
 
@@ -437,10 +436,7 @@ def replace_kpis(html, cur, res):
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--html-in")
-    ap.add_argument("--html-out")
-    ap.add_argument("--no-publish", action="store_true")
+    ap.add_argument("--json-out", help="把统计与净值曲线写成 JSON，供报告脚本使用")
     a = ap.parse_args()
 
     d, ser, core = load_page_data()
@@ -456,17 +452,17 @@ def main():
 
     designs = []
     rr, p = apply_pos(pd.Series(1.0, index=idx), r_base)
-    designs.append(dict(name=f"{core} · 满仓不择时（基线）", stats=metrics(rr), avg_pos=p.mean()))
+    designs.append(dict(r_series=rr, name=f"{core} · 满仓不择时（基线）", stats=metrics(rr), avg_pos=p.mean()))
     rr, p = apply_pos(pos_trend, r_base)
-    designs.append(dict(name=f"{core} × 趋势闸门（MA{TREND_MA_M}，地板 {TREND_FLOOR:.0%}）★推荐",
+    designs.append(dict(r_series=rr, name=f"{core} × 趋势闸门（MA{TREND_MA_M}，地板 {TREND_FLOOR:.0%}）★推荐",
                         stats=metrics(rr), avg_pos=p.mean()))
     if cb_m is not None:
         rr, p = apply_pos((cb_m - CB_LO) / CB_SLOPE, r_base)
-        designs.append(dict(name=f"{core} × CB 估值择时（旧口径）", stats=metrics(rr), avg_pos=p.mean()))
+        designs.append(dict(r_series=rr, name=f"{core} × CB 估值择时（旧口径）", stats=metrics(rr), avg_pos=p.mean()))
         rr, p = apply_pos(pos_trend * (0.7 + 0.3 * cb_m), r_base)
-        designs.append(dict(name="趋势闸门 × CB 微调（0.7+0.3·CB）", stats=metrics(rr), avg_pos=p.mean()))
+        designs.append(dict(r_series=rr, name="趋势闸门 × CB 微调（0.7+0.3·CB）", stats=metrics(rr), avg_pos=p.mean()))
     rr = ser["沪深300"].pct_change()
-    designs.append(dict(name="沪深300（买入持有）", stats=metrics(rr), avg_pos=1.0))
+    designs.append(dict(r_series=rr, name="沪深300（买入持有）", stats=metrics(rr), avg_pos=1.0))
 
     ser_lines = [(f"{core} 满仓", ser[core] / ser[core].iloc[0], "#9ca3af", "4 3")]
     if cb_m is not None:
@@ -529,81 +525,37 @@ def main():
                    f"单边 {COST*1e4:.0f}bp；现金零收益；样本 {base['start']} → {base['end']}（{base['n']} 个月）。"
                    f"股池按季度换手，组合净值本身呈季度阶跃，月度择时反映的是每季首个可交易日的动作。")
 
-    front, back = build_blocks(designs, cur, holdings, notes, cb_note, sample_note)
+    pos_now = float(pos_trend.iloc[-1]) if len(pos_trend.dropna()) else 0.0
+    cb_now = cb_last if cb_last is not None else float("nan")
 
-    skill = find_library_skill()
-    tmpdir = None
-    if a.html_in:
-        html = Path(a.html_in).read_text(encoding="utf-8")
+    payload = {
+        "asof": str(idx[-1].date()),
+        "start": str(idx[0].date()),
+        "months": int(len(idx)),
+        "core": core,
+        "cb_last": None if cb_last is None else round(float(cb_last), 4),
+        "cb_source": cb_src,
+        "pos_now": round(pos_now, 3),
+        "designs": [
+            {
+                "name": x["name"],
+                "avg_pos": round(float(x["avg_pos"]), 4),
+                "stats": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in x["stats"].items()},
+                "nav": [round(float(v), 5) for v in (1 + x["r_series"].fillna(0.0)).cumprod()],
+            }
+            for x in designs
+        ],
+        "dates": [str(d.date()) for d in idx],
+    }
+
+    if a.json_out:
+        Path(a.json_out).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        log(f"已写出 {a.json_out}")
     else:
-        if skill is None:
-            raise SystemExit("找不到资料库 skill，无法读写页面")
-        tmpdir = tempfile.mkdtemp(prefix="bscombo_")
-        r = subprocess.run([sys.executable, str(skill / "page" / "download_page_artifacts.py"),
-                            "--node-id", NODE, "--out-dir", tmpdir], capture_output=True, timeout=300)
-        out = r.stdout.decode("utf-8", "replace")
-        if "KS_ARTIFACTS_OK" not in out:
-            raise SystemExit(f"下载页面失败：{out[-300:]}")
-        html = Path(tmpdir, FILE_NAME).read_text(encoding="utf-8")
-
-    page_cb = extract_page_cb(html)
-    if page_cb is not None:
-        cur["cb"] = f"{page_cb:.4f}"
-
-    html = strip_old_block(html)
-    fi = html.find(FOOTER_KEY)
-    if fi > 0:
-        fj = html.rfind("<div", 0, fi)
-        tail_anchor = fj if fj > 0 else fi
-    else:
-        tail_anchor = html.rfind("</div></body>")
-        if tail_anchor < 0:
-            tail_anchor = html.rfind("</body>")
-    h2 = html.find("<h2")
-    head_anchor = h2 if (0 < h2 < tail_anchor) else tail_anchor
-    html = html[:head_anchor] + front + html[head_anchor:tail_anchor] + back + html[tail_anchor:]
-
-    html = re.sub(r"组合：[^<·]*·\s*双周调仓\s*·\s*CB 连续仓位",
-                  "组合：质量 Top28 · 趋势闸门仓位", html)
-    html = re.sub(r"组合：质量\s*Top30[^<]*", "组合：质量 Top28 · 趋势闸门仓位", html)
-    html = replace_kpis(html, cur, designs)
-    html = html.replace("B-score 建议仓位", "CB 口径仓位（已降级）")
-    html = re.sub(r"仓位 = clip\(\(CB − [0-9.]+?\) ÷ [0-9.]+, 0, 1\)",
-                  "旧口径仅作对照，实际建议仓位见第一节", html)
-
-    html = renumber(html)
-
-    assert "—</td><td class=\"num\">—" not in html, "仍有整行缺失的对比基准"
-    assert html.count("<polyline") >= 3, "曲线数量不足"
-
-    if a.html_out:
-        Path(a.html_out).write_text(html, encoding="utf-8")
-        log(f"已写出 {a.html_out}（未上传）")
-    if a.dry_run or a.html_out:
-        print(json.dumps({x["name"]: {k: (round(v, 4) if isinstance(v, float) else v)
-                                      for k, v in x["stats"].items()} for x in designs},
+        print(json.dumps({x["name"]: payload["designs"][i]["stats"] for i, x in enumerate(designs)},
                          ensure_ascii=False, indent=1))
-        return 0
-
-    out_html = Path(tmpdir or ".", FILE_NAME)
-    out_html.write_text(html, encoding="utf-8")
-    r = subprocess.run([sys.executable, str(skill / "page" / "import_html.py"), str(out_html),
-                        "--file-name", FILE_NAME, "--node-block-id", NODE], capture_output=True, timeout=600)
-    out = r.stdout.decode("utf-8", "replace")
-    if "error" in out.lower() and "KS_" not in out:
-        raise SystemExit(f"上传失败：{out[-400:]}")
-    log("页面已回写")
-
-    if not a.no_publish:
-        r = subprocess.run([sys.executable, str(BASE / "cloud" / "publish_pages.py")],
-                           capture_output=True, timeout=600, env={**os.environ, "ONLY": "BSCORE"})
-        log(r.stdout.decode("utf-8", "replace").strip()[-160:])
-
-    print("BSCOMBO_OK " + json.dumps({
-        "asof": asof, "pos": round(pos_now, 2), "cb": cur["cb"],
-        "designs": {x["name"]: {k: (round(v, 4) if isinstance(v, float) else v)
-                                  for k, v in x["stats"].items()} for x in designs},
-    }, ensure_ascii=False))
+    print("BACKTEST_OK " + json.dumps({"asof": payload["asof"], "pos": payload["pos_now"],
+                                       "cb": payload["cb_last"]}, ensure_ascii=False))
     return 0
 
 
