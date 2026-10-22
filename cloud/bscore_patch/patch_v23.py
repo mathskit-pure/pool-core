@@ -462,6 +462,11 @@ def main() -> None:
     else:
         done["走势图"] = True  # 无新月频源时保留原图，不算失败
 
+    # 数据既然刷新成功，就顺手摘掉「本页数据已过期」横幅（由 stale_banner.py 插入）
+    if "<!--STALE_BANNER:start-->" in html:
+        html, n = re.subn(r"<!--STALE_BANNER:start-->.*?<!--STALE_BANNER:end-->\s*", "", html, flags=re.S)
+        done["清除过期横幅"] = n >= 1
+
     failed = [k for k, v in done.items() if not v]
     if failed:
         print(json.dumps({"ok": False, "reason": "锚点未命中", "failed": failed}, ensure_ascii=False), file=sys.stderr)
