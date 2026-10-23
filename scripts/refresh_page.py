@@ -450,7 +450,7 @@ V3_SIGNS = ('id="posChart"', "四、CSFM 和 TSFM 历史仓位建议")
 # v4 = 2026-10-19 起的新结构（数据包 + 整页重绘）：没有 var BT=、没有 svg#btChart，
 # 净值全靠内联 JS 现画。本脚本的所有锚点都不存在，必须交棒给 scripts/republish_page.py。
 V4_SIGNS = ('id="chart"', 'id="rng"', 'var D={"curve"', "申万三级行业各取前 5")
-# v5 = 原版版式 + 2015-2026 新数据（官方中证800 逐期成分口径）。
+# v5 = 原版版式 + 2017-2026 新数据（官方中证800 逐期成分口径）。
 # 结构与 v3 一模一样，靠这个显式标记区分 —— 否则下面的 v3 分支会拿 pool-core
 # 自己的旧净值（2019-05 起、市值拟合股池）覆盖线上曲线与持仓表。
 V5_MARK = "<!--page-engine:finchain-v5-->"
@@ -1166,7 +1166,7 @@ def main():
     log("模板：%s（%s chars）" % (args.base, f"{len(html):,}"))
 
     layout = detect_layout(html)
-    _what = {"v5": "v5 = 原版版式 + 2015-2026 新数据（finchain 链路），本脚本不适用",
+    _what = {"v5": "v5 = 原版版式 + 2017-2026 新数据（finchain 链路），本脚本不适用",
              "v4": "v4 = 数据包 + 整页重绘（新结构），本脚本不适用",
              "v3": "v3 = CSFM/TSFM + 四、仓位建议 + 质量Top28 v2，只刷新质量Top28",
              "v2": "v2 = 动量轮动版式，整页数据区重建"}

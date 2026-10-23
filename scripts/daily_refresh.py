@@ -87,7 +87,7 @@ GATE_FORBIDDEN = [
 def page_engine():
     """页面由哪条链路维护。
 
-    2026-10-19 起线上是「原版版式 + 2015-2026 新数据」（finchain 链路）：
+    2026-10-19 起线上是「原版版式 + 2017-2026 新数据」（finchain 链路）：
     页面结构一字未改，内容由 scripts/finchain/ 三步产出。
     这里用 data/page_engine.txt 显式声明，避免再靠特征猜版式 ——
     历史上就是因为靠猜，才把整页回退过两次。
@@ -459,9 +459,9 @@ def main():
     engine = page_engine()
     keep_template = True
     if engine == "finchain-v5":
-        # 原版版式 + 2015-2026 新数据：结构不动，只换内容。
+        # 原版版式 + 2017-2026 新数据：结构不动，只换内容。
         # 走 finchain 三步（选股/净值 → 内容包 → 原位替换），不碰 data/page_base.html。
-        log("\n=== 重建页面（finchain：原版版式 + 2015-2026 新数据）===")
+        log("\n=== 重建页面（finchain：原版版式 + 2017-2026 新数据）===")
         run([PY, os.path.join(BASE, "scripts", "finchain", "rebuild_page.py")], timeout=3600)
         page_html = os.path.join(str(FIN_OUT), "pool_page_v5.html")
         log(f"页面已重建：{page_html}")

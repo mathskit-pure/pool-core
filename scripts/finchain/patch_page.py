@@ -7,7 +7,7 @@
 只做四件事：
   ① 说明文字里过期的口径（回测起点、持仓数、基准、v2 权重规则、报告期范围、KPI）
   ② 二、季度股池明细：35 期新池（沿用原 .card/.ind/.mini 结构）
-  ③ 三、组合回测：var BT 换成 2015-2026 逐日净值 + 静态表 + 时间轴刻度
+  ③ 三、组合回测：var BT 换成 2017-2026 逐日净值 + 静态表 + 时间轴刻度
   ④ 四、仓位建议（var POS，按新净值重算）+ 五、持仓变动明细（最近 8 期）
 """
 import json
@@ -103,12 +103,11 @@ def sec_bt_table(perf):
 def sec_recent(rows, kind, fancy=False):
     """五、持仓变动明细的单组合 tbody
 
-    原版三张表写法并不统一，这里**照原样**复刻，不做「统一美化」：
-      · 5.1 / 5.2（fancy=False）：持仓格里各条直接拼接、无分隔符；
-        剔除格用「、」分隔；整行没有小字副行。
-      · 5.3 质量Top28（fancy=True）：持仓格与剔除格都用「、」分隔，
-        且三个单元格末尾各带一行 <span class="cnt"> 小字副行
-        （季末日 / 「N 只 · 新增 M」/「K 只」）。
+    三个组合统一版式（2026-10-19 起）：
+      · 每条「名称 + 权重」用不可断行容器 <span class="it"> 包住，条目之间用「、」分隔，
+        与「本期剔除」列完全同构，避免名称与百分比被拆到两行、整格糊成一片。
+      · 5.3 质量组合（fancy=True）另在三个单元格末尾各带一行 <span class="cnt"> 小字副行
+        （决策日 / 「N 只 · 新增 M」/「K 只」）。
     """
     body = []
     for i, r in enumerate(rows):
@@ -125,9 +124,10 @@ def sec_recent(rows, kind, fancy=False):
         cnt = (f'<span class="cnt">{dec}</span>') if fancy else ""
         head = f'<td class="day">{r["date"]}{pos}{nav}{latest}{cnt}</td>'
 
-        items = [f'<span class="{"nm-new" if h["new"] else "nm"}">{esc(h["n"])}</span>'
-                 f'<span class="wt">{h["w"]*100:.2f}%</span>' for h in r["hold"]]
-        hold = ("、".join(items) if fancy else "".join(items))
+        items = [f'<span class="it"><span class="{"nm-new" if h["new"] else "nm"}">'
+                 f'{esc(h["n"])}</span><span class="wt">{h["w"]*100:.2f}%</span></span>'
+                 for h in r["hold"]]
+        hold = "、".join(items)
         if fancy:
             n_new = sum(1 for h in r["hold"] if h["new"])
             tail = f'{len(r["hold"])} 只' + (f' · 新增 {n_new}' if n_new else "")
@@ -135,14 +135,10 @@ def sec_recent(rows, kind, fancy=False):
 
         outs = []
         for o in r["out"]:
-            if o["r"] is None:
-                outs.append(f'<span class="nm-out">{esc(o["n"])}</span>'
-                            f'<span class="join">建仓 {o["e"] or "—"}</span> <span class="mut">—</span>')
-            else:
-                cls = "up" if o["r"] >= 0 else "dn"
-                outs.append(f'<span class="nm-out">{esc(o["n"])}</span>'
-                            f'<span class="join">建仓 {o["e"] or "—"}</span> '
-                            f'<span class="{cls}">{o["r"]*100:+.2f}%</span>')
+            r_txt = ('<span class="mut">—</span>' if o["r"] is None else
+                     f'<span class="{"up" if o["r"] >= 0 else "dn"}">{o["r"]*100:+.2f}%</span>')
+            outs.append(f'<span class="it"><span class="nm-out">{esc(o["n"])}</span>'
+                        f'<span class="join">建仓 {o["e"] or "—"}</span>{r_txt}</span>')
         if outs:
             out_cell = "、".join(outs)
             if fancy:
@@ -156,6 +152,7 @@ def sec_recent(rows, kind, fancy=False):
     return "<tbody>" + "".join(body) + "</tbody>"
 
 
+
 def ticks(dates):
     ys = []
     for y in range(int(dates[0][:4]) + 1, int(dates[-1][:4]) + 1):
@@ -164,6 +161,65 @@ def ticks(dates):
             continue
         ys.append((y, k / (len(dates) - 1) * 100))
     return "".join(f'<span style="left:{p:.2f}%">{y}</span>' for y, p in ys)
+
+
+# ---------------- 顶部「得分 / 仓位建议」卡片 ----------------
+# 2026-10-19 页面重构时被整张删掉，本次按原样还原（位置＝KPI 行末尾第 6 张）。
+# 数值优先跟随 out15/bscore_card.json（B-score 链路每天写入则自动更新），
+# 没有该文件时用最近一次快照（2026-10-16：CB 0.559 → 建议仓位 50%）。
+BSCORE_JSON = os.path.join(str(OUT), "bscore_card.json")
+BSCORE_SNAPSHOT = {"pos": 50, "cb": "0.559", "asof": "2026-10-16"}
+
+
+def bscore_card():
+    v = dict(BSCORE_SNAPSHOT)
+    if os.path.exists(BSCORE_JSON):
+        try:
+            v.update({k: x for k, x in json.load(open(BSCORE_JSON, encoding="utf-8")).items()
+                      if x not in (None, "")})
+        except Exception as e:  # 数据文件坏了不阻断出图，退回快照
+            print(f"  ! bscore_card.json 读取失败（{e}），用快照值", flush=True)
+    return ('<div class="kpi"><span>B-score 建议仓位</span>'
+            f'<b>{int(v["pos"])}%</b>'
+            '<span class="afgi-bd" style="display:inline-block; background:#fff7ed; '
+            'color:#b45309; border-radius:999px; padding:1px 9px; font-size:12px; '
+            f'font-weight:600">CB {v["cb"]}</span>'
+            f'<span style="display:block; margin-top:3px">截至 {v["asof"]}</span></div>')
+
+
+def insert_kpi_card(h, card_html):
+    """把卡片塞进 <div class="kpis"> 的末尾（按 div 配平找闭合点，不用贪婪正则）"""
+    tag = '<div class="kpis">'
+    i = h.find(tag)
+    assert i > 0, "找不到 KPI 行"
+    j = i + len(tag)
+    depth = 1
+    for m in re.finditer(r"<div\b|</div>", h[j:]):
+        depth += 1 if m.group(0).startswith("<div") else -1
+        if depth == 0:
+            k = j + m.start()
+            return h[:k] + card_html + h[k:]
+    raise AssertionError("KPI 行未闭合")
+
+
+# ---------------- 五章：持仓 / 剔除两列版式 ----------------
+# 诉求：① 两列等宽；② 每条持仓不得在「名称」与「百分比」之间被拆行
+#      （原来 span 直接相连，浏览器可在任意位置断行，出现「提前换行」）。
+TBL_CSS = """
+/* 2026-10-19 五章版式修复：两列等宽 + 条目内不断行 */
+.tbl5{table-layout:fixed}
+.tbl5 .c-hold,.tbl5 .c-out{width:auto}
+.tbl5 .cell .it{display:inline-block;white-space:nowrap;margin:0 1px}
+.tbl5 .cell .wt{margin-left:2px}
+.tbl5 .cell .join{margin:0 4px}
+@media(max-width:640px){.grid,.strategy-grid{grid-template-columns:1fr}}
+"""
+
+
+def inject_tbl_css(h):
+    i = h.find("</style>")
+    assert i > 0, "找不到 </style>"
+    return h[:i] + TBL_CSS + h[i:]
 
 
 def build():
@@ -187,7 +243,15 @@ def build():
     h = re.sub(r'(<span>股池覆盖个股\(并集\)</span>)<b>[\d,]+</b>',
                rf'\g<1><b>{kpi["n_stock"]:,}</b>', h)
     h = re.sub(r'(<span>申万三级行业</span>)<b>\d+</b>', rf'\g<1><b>{kpi["n_ind"]}</b>', h)
-    h = re.sub(r'(<span>质量Top28组合持仓</span>)<b>\d+</b>', rf'\g<1><b>{kpi["n_hold"]}</b>', h)
+    # 三道筛落地后每期不再是 28 只，标签补「(筛后)」免得误读
+    h = h.replace("<span>质量Top28组合持仓</span>", "<span>质量Top28组合持仓(筛后)</span>")
+    h = re.sub(r'(<span>质量Top28组合持仓\(筛后\)</span>)<b>\d+</b>',
+               rf'\g<1><b>{kpi["n_hold"]}</b>', h)
+
+    # ---- ①b 顶部还原「得分 + 仓位建议」卡片（2026-10-19 被误删） ----
+    h = insert_kpi_card(h, bscore_card())
+    # ---- ①c 五章两列版式修复 ----
+    h = inject_tbl_css(h)
 
     # ---- ② 二章整体重建
     a = h.find('<h2>二、季度股池')
@@ -202,9 +266,13 @@ def build():
 
     # 说明文字：起点、CSFM/TSFM 参数、基准
     seg = seg.replace("回测自 <b>2019-05-06</b> 起。",
-                      f'回测自 <b>{meta["start"]}</b> 起'
-                      f'（首期股池的信息可得日为 2015-05-01，其后首个交易日建仓；'
-                      f'六条曲线统一在该日归一到 1.00）。')
+                      f'回测自 <b>{meta["start"]}</b> 起（2017-01-01 为元旦非交易日，'
+                      f'取 2017 年首个交易日为净值基准日；期初持仓沿用前一调仓日的结果，'
+                      f'因子动量所需的 12 个月历史收益在窗口外预热、不参与统计；'
+                      f'六条曲线统一在该日归一到 1.00）。'
+                      f'<b>2015-2016 不计入业绩</b>：该区间含三轮股灾、2016 年首日熔断与'
+                      f'千股停牌，调仓日大量标的无法成交、停牌权重一度达 25%，'
+                      f'收益分布极端且不可复制，计入会让「组合本身好不好」失真。')
     seg = seg.replace(
         '取当期股池内得分最高的 <b>30 只等权持有、月度调仓</b>',
         '取当期股池内得分最高的 <b>CSFM 20 只 / TSFM 30 只等权持有、月度调仓</b>')
@@ -219,10 +287,14 @@ def build():
     seg = seg.replace('（沪深300 与中证500 合成中证800，正是本页标的池的两半）', '')
     # 注意：原文里的 "< 5,000" 是裸小于号，浏览器按文本处理，但正则抽文本时会被当成标签开头。
     # 重写这段时统一用 &lt; 转义，避免不同解析器下被吞掉半句。
+    # 2026-10-19：v2 三道筛已在 daily_nav15.quality_picks 真正落地，这段说明恢复原口径，
+    # 只补一句「筛后剩多少只」，免得读者以为仍是固定 28 只。
     seg = seg.replace(
         '权重按 v2 三道筛分配：剔除 20 日均成交额 < 5,000 万元的标的，按换手率代理＝20 日均成交额÷总市值 剔除最拥挤的 1/3，余者 ∝ 1/(换手分位+0.15)、单只限幅 2%~8%）',
-        '行业上限 2 只；剔除 20 日均成交额 &lt; 5,000 万元的标的；'
-        '余者按 20 日换手率反向加权，权重 ∝ 1/(1 + 换手率/当期中位数)）')
+        '权重按 v2 三道筛分配：先按得分降序、单行业 ≤2 只取满 28 只候选，'
+        '再剔除 20 日均成交额 &lt; 5,000 万元的标的，按换手率代理＝20 日均成交额÷总市值 '
+        '剔除最拥挤的 1/3，余者 ∝ 1/(换手分位+0.15)、单只限幅 2%~8%；'
+        '因此实际持仓 = 三道筛后的存活数，近年多在 18~22 只，不再固定 28 只）')
     # κ 门控说明（CSFM 用 1.5、TSFM 用 1.0），插在 CSFM/TSFM 段末尾的"注意"前
     if 'F 反馈强度' not in seg:
         seg = seg.replace('。<b>注意</b>',
@@ -257,6 +329,12 @@ def build():
     h = re.sub(r'(TSFM 建议仓位（当前 )\d+%', rf'\g<1>{pos["tsfm"][-1]}%', h)
 
     # ---- ⑤ 五章三个 tbody
+    # 5.3 的选股说明：候选是「取满 28 只」，实际持仓是三道筛后的存活数
+    h = h.replace("当期股池内按舞弊调整质量因子得分降序取前 28 只",
+                  "当期股池内按舞弊调整质量因子得分降序取满 28 只候选")
+    h = h.replace("（取代原「前 3 名各 16%」）</b>",
+                  "（取代原「前 3 名各 16%」）；三道筛后通常剩 18~22 只，"
+                  "KPI 与各期表头写的都是筛后实际持仓数</b>")
     marks = ["5.1　因子动量·横截面 CSFM", "5.2　因子动量·时间序列 TSFM",
              "5.3　质量Top28组合", "六、如何更新最新一季股池"]
     keys = ["CSFM", "TSFM", "Q28"]
@@ -268,8 +346,10 @@ def build():
         seg = re.sub(r'<tbody>.*?</tbody>',
                      lambda m, k=k: sec_recent(recent[k], k, fancy=(k == "Q28")),
                      seg, count=1, flags=re.S)
-        # 摘要行与表头都写着「持仓 N 只」，两处都要改
-        seg = re.sub(r'持仓 \d+ 只', f'持仓 {len(recent[k][0]["hold"])} 只', seg)
+        # 摘要行与表头都写着「持仓 N 只」，两处都要改（表头是「本期持仓（N 只）」）
+        n_now = len(recent[k][0]["hold"])
+        seg = re.sub(r'持仓 \d+ 只', f'持仓 {n_now} 只', seg)
+        seg = re.sub(r'本期持仓（\d+ 只）', f'本期持仓（{n_now} 只）', seg)
         h = h[:s0] + seg + h[s1:]
 
     # ---- ⑥ 六章「如何更新最新一季股池」的流程说明

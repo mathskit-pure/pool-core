@@ -5,7 +5,7 @@
 ----------
 这条链路会把页面**整页重绘成新结构**（净值全靠内联 JS 现画、股池按行业嵌套）。
 2026-10-19 用户明确否决："不要动 UI 细节，严格按照要求替换内容"。
-现网版本是「原版版式 + 2015-2026 新数据」，由 :mod:`scripts.finchain` 维护：
+现网版本是「原版版式 + 2017-2026 新数据」，由 :mod:`scripts.finchain` 维护：
 
     python scripts/finchain/rebuild_page.py [--upload] [--publish]
 

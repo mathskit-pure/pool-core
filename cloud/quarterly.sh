@@ -48,7 +48,7 @@ if [[ $rc -ne 0 ]]; then
   exit $rc
 fi
 
-# ------- 页面重发布（原版版式 + 2015-2026 新数据） -------
+# ------- 页面重发布（原版版式 + 2017-2026 新数据） -------
 # 2026-10-19 起页面结构不动，只换内容：走 pool-core 的 scripts/finchain/：
 #   daily_nav15.py 选股/净值 → pack_page.py 内容包 → patch_page.py 原位替换
 #   → 门禁 → import_html 覆写固定节点 → publish 同步外部网页。
