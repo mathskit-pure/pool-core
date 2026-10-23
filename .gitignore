@@ -23,6 +23,10 @@ data/*
 # cov_insts / thick|thin|none）。由 neodata.ratings 逐只检索后固化，
 # 重建需数百次接口调用，故随代码入库，供无覆盖情景回测复现。
 !data/coverage_label_all.csv
+# ratings19.json 是当前一期 19 只持仓的月度机构评级明细（neodata.ratings 实测，
+# 含 target_avg_price 与 institution_rating 逐月分布）。接口只回最近 6 个月，
+# 过期即永久不可复现，故随代码入库。
+!data/ratings19.json
 
 output/
 .workbuddy/
