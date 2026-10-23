@@ -9,6 +9,7 @@
   ② 二、季度股池明细：35 期新池（沿用原 .card/.ind/.mini 结构）
   ③ 三、组合回测：var BT 换成 2017-2026 逐日净值 + 静态表 + 时间轴刻度
   ④ 四、仓位建议（var POS，按新净值重算）+ 五、持仓变动明细（最近 8 期）
+  ⑤ 七、市场情绪展望：研报目标价 + 情绪拆解（片段来自 data/mood_block.html）
 """
 import json
 import os
@@ -222,6 +223,67 @@ def inject_tbl_css(h):
     return h[:i] + TBL_CSS + h[i:]
 
 
+# ---------------- 七章：市场情绪展望 ----------------
+# 研报目标价与情绪研判无法自动抓取，属于「人工核验后固化的快照」：
+# data/mood_q28.json（结构化数据）→ build_mood_block.py 渲染 → data/mood_block.html。
+# 换期时重跑 build_mood_block.py 即可，本函数只负责把片段塞到页脚之前。
+MOOD_BLOCK = os.path.join(DATA, "mood_block.html")
+MOOD_BEGIN = "<!--MOOD-SEC-BEGIN-->"
+MOOD_END = "<!--MOOD-SEC-END-->"
+MOOD_CSS_BEGIN = "/*MOOD-CSS-BEGIN*/"
+MOOD_CSS_END = "/*MOOD-CSS-END*/"
+
+
+def strip_mood(h):
+    """摘掉已存在的七章正文与样式。返回 (html, 被摘掉的 CSS 文本或 None)。
+
+    为什么要连 CSS 一起摘：cloud/seed_page_base.py --force 会把**线上页面**
+    重新拉回来当模板，而线上页面是含七章的。只摘正文不摘样式，样式就会
+    每 seed 一次叠一份。
+    """
+    while MOOD_BEGIN in h:
+        a = h.find(MOOD_BEGIN)
+        b = h.find(MOOD_END, a)
+        if b < 0:
+            break
+        h = h[:a] + h[b + len(MOOD_END):]
+    css = None
+    a = h.find(MOOD_CSS_BEGIN)
+    if a >= 0:
+        b = h.find(MOOD_CSS_END, a)
+        if b > a:
+            css = h[a + len(MOOD_CSS_BEGIN):b]
+            h = h[:a] + h[b + len(MOOD_CSS_END):]
+    return h, css
+
+
+def insert_mood_block(h):
+    """插到六章之后、页脚说明之前。幂等：重复执行不会叠加。
+
+    片段头部的 <style> 会被摘出来并入主样式表（避免 body 中间出现 style 标签），
+    其余 HTML 落到正文。
+    """
+    h, _ = strip_mood(h)                       # 先清旧块（换期重跑 / 模板被污染时）
+    if not os.path.exists(MOOD_BLOCK):
+        print("  · 跳过七章（缺 data/mood_block.html，先跑 build_mood_block.py）", flush=True)
+        return h
+    blk = open(MOOD_BLOCK, encoding="utf-8").read().strip()
+
+    m = re.match(r"\s*<style[^>]*>([\s\S]*?)</style>\s*", blk)
+    if m:
+        blk = blk[m.end():]
+        end = h.find("</style>")
+        assert end > 0, "找不到 </style>"
+        h = h[:end] + m.group(1).strip() + "\n" + h[end:]
+
+    foot = '<p class="muted" style="margin-top:26'
+    k = h.find(foot)
+    if k < 0:                                  # 兜底：插在 </body> 前
+        k = h.rfind("</body>")
+        assert k > 0, "找不到页脚，无法插入七章"
+    return h[:k] + f"\n{MOOD_BEGIN}\n{blk}\n{MOOD_END}\n" + h[k:]
+
+
 def build():
     h = clean(open(TPL, encoding="utf-8").read())
     D = json.load(open(os.path.join(OUT, "page_content.json"), encoding="utf-8"))
@@ -360,6 +422,9 @@ def build():
     h = h.replace(
         "按申万三级行业取评分前 5，生成新一期股池并写入本页。",
         f"按申万三级行业取评分前 {TOPN_IND}，生成新一期股池并写入本页。")
+
+    # ---- ⑦ 七章「市场情绪展望」：研报目标价 + 情绪拆解（人工核验快照）
+    h = insert_mood_block(h)
 
     # 版式标记：refresh_page.py 见到它就交棒（结构与 v3 相同，只能靠显式标记区分）
     h = h.replace("<body>", "<body><!--page-engine:finchain-v5-->", 1)

@@ -58,8 +58,28 @@ def main() -> int:
     if page_base.exists():
         shutil.copyfile(page_base, str(page_base) + ".bak")
     shutil.copyfile(entry, page_base)
+
+    # 线上页面含第七章《市场情绪展望》，但模板必须是「干净原版」：
+    # patch_page.insert_mood_block 每次都从 MOOD_BLOCK 片段重新注入，
+    # 模板里若残留一份，会让第七章变成「模板旧内容 + 注入新内容」两套。
+    # 这里只摘正文与样式，不动其它任何结构（seed 的定位就是搬运，不是编辑）。
+    txt = page_base.read_text(encoding="utf-8", errors="replace")
+    n0 = len(txt)
+    for bgn, end in (("<!--MOOD-SEC-BEGIN-->", "<!--MOOD-SEC-END-->"),
+                     ("/*MOOD-CSS-BEGIN*/", "/*MOOD-CSS-END*/")):
+        while bgn in txt:
+            a = txt.find(bgn)
+            b = txt.find(end, a)
+            if b < 0:
+                break
+            txt = txt[:a] + txt[b + len(end):]
+    if len(txt) != n0:
+        page_base.write_text(txt, encoding="utf-8")
+        stripped = n0 - len(txt)
+
     print(f"[seed] 模板已就位：{page_base}（{page_base.stat().st_size:,} 字节）"
-          f" ← 节点 {a.node_id}")
+          f" ← 节点 {a.node_id}"
+          + (f"（已摘除残留七章 {stripped:,} 字符）" if len(txt) != n0 else ""))
     return 0
 
 

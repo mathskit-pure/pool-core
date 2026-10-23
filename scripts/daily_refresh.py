@@ -76,6 +76,8 @@ GATE_REQUIRED = [
     ('因子动量CSFM', 1),
     ('因子动量TSFM', 1),
     ('质量Top28组合', 1),
+    ('七、市场情绪展望', 1),       # 研报情绪模块（finchain 第③步注入）
+    ('class="mood-stk"', 1),      # 行数由 data/mood_q28.json 决定，换期后同步即可
 ]
 GATE_FORBIDDEN = [
     "三、动量轮动回测",                    # 旧版式特征（该组合已下线）
