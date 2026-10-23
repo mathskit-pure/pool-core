@@ -10,6 +10,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -23,6 +24,27 @@ DEFAULT_OUT = os.path.join(BASE, "data", "mood_block.html")
 
 def esc(s):
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+
+
+def rich(s):
+    """转义后把 **关键句** 变成红色加粗。
+
+    「不被表面文字蒙蔽」这件事没法靠脚本判断，但「哪一句是关键」可以让
+    写数据的人（或滚动任务里的模型）用 ** 标出来，渲染层负责把它染红。
+    这样标红位置始终跟着内容走，不会因为改文案而错位。
+    """
+    out = esc(s)
+    return re.sub(r"\*\*(.+?)\*\*", r'<b class="hl">\1</b>', out)
+
+
+# 变化类型 → (符号, 短语)。三种都用红色，靠符号区分方向：
+# 用户要的是「重大变化就标红」，不区分好坏，但得让人一眼看出往哪边变。
+FLAG_META = {
+    "down": ("▼", "情绪下调"),
+    "up": ("▲", "情绪上调"),
+    "logic": ("⚡", "逻辑变化"),
+    "none": ("○", "转为无覆盖"),
+}
 
 
 def pct(x):
@@ -55,16 +77,31 @@ def tp_cell(r):
             f'<div class="mood-src">{esc(r["tp_src"])}</div>')
 
 
+def flag_html(r):
+    """行内「重大变化」红标：类型徽标 + 一句话说明 + 变化日期。"""
+    f = (r.get("flag") or "").strip()
+    if not f:
+        return ""
+    icon, label = FLAG_META.get(f, ("●", "变化"))
+    txt = esc(r.get("flag_txt") or "")
+    at = esc(r.get("flag_at") or "")
+    when = f'<u>{at}</u>' if at else ""
+    return (f'<div class="mood-flag mf-{esc(f)}"><b>{icon} {label}</b>'
+            f'{("　" + txt) if txt else ""}{when}</div>')
+
+
 def row_html(r):
     chg_cls = "up" if r["chg"] >= 0 else "dn"
-    return f"""<tr>
+    hot = " mood-hot" if (r.get("flag") or "").strip() else ""
+    return f"""<tr class="{hot.strip()}">
 <td class="mood-stk"><b>{esc(r['name'])}</b><span class="mood-code">{esc(r['code'])} · {r['weight']:.2f}%</span></td>
 <td class="mood-px"><b>{r['price']:.2f}</b><span class="{chg_cls}">{r['chg']:+.2f}%</span></td>
 <td class="mood-tp">{tp_cell(r)}</td>
-<td class="mood-md"><span class="mood-tag mt-{r['mood_cls']}">{esc(r['mood_level'])}</span>
-<div class="mood-key">{esc(r['key'])}</div>
-<div class="mood-risk"><b>风险</b>　{esc(r['risk'])}</div></td>
+<td class="mood-md">{flag_html(r)}<span class="mood-tag mt-{r['mood_cls']}">{esc(r['mood_level'])}</span>
+<div class="mood-key">{rich(r['key'])}</div>
+<div class="mood-risk"><b>风险</b>　{rich(r['risk'])}</div></td>
 </tr>"""
+
 
 
 def stats(rows):
@@ -78,9 +115,11 @@ def stats(rows):
     med = mids[len(mids) // 2] if len(mids) % 2 else (mids[len(mids) // 2 - 1] + mids[len(mids) // 2]) / 2
     none = [r for r in rows if r.get("tp_lo") is None]
     down = [r for r in rows if "下调" in (r.get("tp_src") or "")]
+    flagged = [r for r in rows if (r.get("flag") or "").strip()]
     return {
         "n": len(rows), "n_has": len(has), "n_none": len(none),
         "median": med, "down": down, "mids": mids,
+        "n_flag": len(flagged), "flagged": flagged,
     }
 
 
@@ -127,6 +166,18 @@ table.mood tbody tr:hover td{background:#fafbfc}
 .mood-sum li b{color:var(--tx)}
 @media(max-width:760px){table.mood{min-width:0}table.mood th:nth-child(2),
  table.mood td:nth-child(2){display:none}}
+/* 滚动更新：情绪或逻辑出现重大变化的那一行整体标红（红底 + 左侧红边 + 红色徽标）*/
+.mood-kpi .k b.hotv{color:#c0392b}
+.mood-hot td{background:#fffafa}
+.mood-hot td:first-child{box-shadow:inset 3px 0 0 #c0392b}
+.mood-hot:hover td{background:#fff5f3}
+.mood-flag{display:block;font-size:11.5px;line-height:1.6;color:#c0392b;background:#fdf1ef;
+ border:1px solid #f6cfc9;border-radius:5px;padding:4px 8px;margin-bottom:6px}
+.mood-flag b{color:#a52a1e;font-weight:700}
+.mood-flag u{text-decoration:none;color:#b06a60;margin-left:6px;font-variant-numeric:tabular-nums}
+.mood-flag.mf-up{border-color:#f0b8b0}
+.mood-flag.mf-up b{color:#c0392b}
+b.hl{color:#c0392b;font-weight:700}
 /*MOOD-CSS-END*/
 </style>
 """
@@ -143,8 +194,12 @@ def build(d):
         ("目标价较前次下调", f'{len(s["down"])} 只', "研报中括号内标注的前值更高"),
         ("无个股研报覆盖", f'{s["n_none"]} 只', "含无评级、有评级无价位、价位无法溯源"),
     ]
+    if s["n_flag"]:
+        kpis.insert(0, ("本期重大变化", f'{s["n_flag"]} 只',
+                        "情绪或逻辑较上次更新有实质变动，行内标红"))
     kpi_html = "".join(
-        f'<div class="k"><i>{esc(a)}</i><b>{esc(b)}</b><u>{esc(c)}</u></div>' for a, b, c in kpis)
+        f'<div class="k"><i>{esc(a)}</i><b{(" class=\'hotv\'" if a == "本期重大变化" else "")}>{esc(b)}</b><u>{esc(c)}</u></div>'
+        for a, b, c in kpis)
 
     note = (
         f'本表列出质量 Top28 组合<b>最新一期（{m["rebal_date"]} 调仓）</b>的全部 {m["n_holdings"]} 只持仓，'
@@ -155,6 +210,11 @@ def build(d):
         f'<b>评级措辞与当期业绩之间有没有落差</b>。'
         f'标题写「买入」但盈利预测连降、或目标价隐含 70% 空间却三个月未动、'
         f'或买入评级建立在资产处置而非经营之上的，都在这一列点名。'
+        f'<br><b>本表按交易日滚动更新</b>：股价每日刷新，研报与情绪判断随新研报重估。'
+        f'某只票的<b>情绪档位</b>或<b>关键逻辑</b>较上一次更新出现实质变化时'
+        f'（评级/目标价方向反转、盈利预测大幅修正、业绩与叙事背离、覆盖转空或转多），'
+        f'该行整行标红，情绪列顶部给出变化说明与变化日期，关键句以<b class="hl">红色加粗</b>标出。'
+        f'标红只表示「变了」，不表示好坏。'
     )
 
     # 权重聚合：周期资源类（铝/煤/电/钨铟）

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """季度股池页 · finchain 链路总入口。
 
-四步产出原版版式的新页面（不改任何 UI 细节）：
+五步产出原版版式的新页面（不改任何 UI 细节）：
     ① daily_nav15.py      选股 + 逐日净值展开
     ② pack_page.py        打包成 out15/page_content.json
-    ③ build_mood_block.py 研报情绪片段（第七章）data/mood_block.html
-    ④ patch_page.py       在 data/page_base.html 上原位替换内容
+    ③ roll_mood.py        第七章滚动：刷 T 日收盘价 + 与上次快照比对打标（标红）
+    ④ build_mood_block.py 研报情绪片段（第七章）data/mood_block.html
+    ⑤ patch_page.py       在 data/page_base.html 上原位替换内容
 
 之后可选上传（覆写固定节点编辑态）与发布（同步外部网页快照）。
 
@@ -122,22 +123,31 @@ def main():
     ap.add_argument("--upload", action="store_true", help="覆写资料库节点（编辑态）")
     ap.add_argument("--publish", action="store_true", help="重新发布，同步外部网页快照")
     ap.add_argument("--skip-nav", action="store_true", help="跳过净值展开，直接用现有 out15 产物")
+    ap.add_argument("--no-roll", action="store_true", help="跳过第七章股价刷新与变化比对")
     a = ap.parse_args()
 
     if not os.path.exists(PAGE_BASE):
         raise SystemExit(f"! 缺少原版模板：{PAGE_BASE}")
 
     if not a.skip_nav:
-        log("[1/4] 选股 + 日频净值")
+        log("[1/5] 选股 + 日频净值")
         run([PY, os.path.join(HERE, "daily_nav15.py")])
-    log("[2/4] 打包内容")
+    log("[2/5] 打包内容")
     run([PY, os.path.join(HERE, "pack_page.py")])
-    log("[3/4] 生成第七章（研报情绪）")
+
+    # 第七章价格每天都要新，所以滚动放在链路里而不是靠人记得单独跑。
+    # roll_mood 内部对行情接口失败是降级处理（保留原价、照常往下走），不会卡住建页。
     if os.path.exists(MOOD_JSON):
+        if not a.no_roll:
+            log("[3/5] 第七章滚动：刷收盘价 + 比对变化")
+            run([PY, os.path.join(HERE, "roll_mood.py")])
+        else:
+            log("[3/5] 已跳过第七章滚动（--no-roll）")
+        log("[4/5] 生成第七章（研报情绪）")
         run([PY, os.path.join(HERE, "build_mood_block.py")])
     else:
-        log(f"   ! 缺 {MOOD_JSON}，第七章将被跳过（门禁会因此拒绝上传）")
-    log("[4/4] 原位替换内容")
+        log(f"[3/5] [4/5] 缺 {MOOD_JSON}，第七章将被跳过（门禁会因此拒绝上传）")
+    log("[5/5] 原位替换内容")
     run([PY, os.path.join(HERE, "patch_page.py")])
 
     warn = stale_mood()
