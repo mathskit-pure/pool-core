@@ -119,6 +119,7 @@ if has_stage check; then
   for f in \
     "$AFGI_DIR/output/afgi_timeseries.csv" \
     "$POOL_DIR/data/page_base.html" \
+    "$POOL_DIR/data/mood_q28.json" \
     "$POOL_DIR/data/prices_full_v2.csv" \
     "$POOL_DIR/data/bench_all.csv" \
     "$MOM_DIR/data/ohlc_raw.csv"
