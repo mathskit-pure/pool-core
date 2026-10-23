@@ -9,7 +9,8 @@
   ② 二、季度股池明细：35 期新池（沿用原 .card/.ind/.mini 结构）
   ③ 三、组合回测：var BT 换成 2017-2026 逐日净值 + 静态表 + 时间轴刻度
   ④ 四、仓位建议（var POS，按新净值重算）+ 五、持仓变动明细（最近 8 期）
-  ⑤ 七、市场情绪展望：研报目标价 + 情绪拆解（片段来自 data/mood_block.html）
+  ⑤ 六、市场情绪展望：研报目标价 + 情绪拆解（片段来自 data/mood_block.html）
+     原「七、如何更新最新一季股池」顺势让位、编号改为七。
 """
 import json
 import os
@@ -223,10 +224,13 @@ def inject_tbl_css(h):
     return h[:i] + TBL_CSS + h[i:]
 
 
-# ---------------- 七章：市场情绪展望 ----------------
+# ---------------- 六章：市场情绪展望 ----------------
+# 顺序：五章(持仓明细) → 六、市场情绪展望 → 七、如何更新最新一季股池。
+# 情绪表比「怎么更新股池」对读者有价值，放在前面。
+HELP_TITLE = "如何更新最新一季股池"
 # 研报目标价与情绪研判无法自动抓取，属于「人工核验后固化的快照」：
 # data/mood_q28.json（结构化数据）→ build_mood_block.py 渲染 → data/mood_block.html。
-# 换期时重跑 build_mood_block.py 即可，本函数只负责把片段塞到页脚之前。
+# 换期时重跑 build_mood_block.py 即可，本函数只负责把片段插到「如何更新股池」之前。
 MOOD_BLOCK = os.path.join(DATA, "mood_block.html")
 MOOD_BEGIN = "<!--MOOD-SEC-BEGIN-->"
 MOOD_END = "<!--MOOD-SEC-END-->"
@@ -234,11 +238,21 @@ MOOD_CSS_BEGIN = "/*MOOD-CSS-BEGIN*/"
 MOOD_CSS_END = "/*MOOD-CSS-END*/"
 
 
+def renumber_help(h):
+    """把「如何更新最新一季股池」的编号定成七。
+
+    模板可能是干净原版（六），也可能是 seed 从线上拉回来的（已被改成七），
+    所以先归一再升号，保证重复运行结果一致。
+    """
+    h = h.replace("七、" + HELP_TITLE, "六、" + HELP_TITLE)   # 污染模板先归位
+    return h.replace("六、" + HELP_TITLE, "七、" + HELP_TITLE)
+
+
 def strip_mood(h):
-    """摘掉已存在的七章正文与样式。返回 (html, 被摘掉的 CSS 文本或 None)。
+    """摘掉已存在的情绪模块正文与样式。返回 (html, 被摘掉的 CSS 文本或 None)。
 
     为什么要连 CSS 一起摘：cloud/seed_page_base.py --force 会把**线上页面**
-    重新拉回来当模板，而线上页面是含七章的。只摘正文不摘样式，样式就会
+    重新拉回来当模板，而线上页面是含情绪表的。只摘正文不摘样式，样式就会
     每 seed 一次叠一份。
     """
     while MOOD_BEGIN in h:
@@ -258,14 +272,14 @@ def strip_mood(h):
 
 
 def insert_mood_block(h):
-    """插到六章之后、页脚说明之前。幂等：重复执行不会叠加。
+    """插到五章之后、六章「如何更新最新一季股池」之前。幂等：重复执行不会叠加。
 
     片段头部的 <style> 会被摘出来并入主样式表（避免 body 中间出现 style 标签），
-    其余 HTML 落到正文。
+    其余 HTML 落到正文。调用前 h 必须已过 renumber_help()。
     """
     h, _ = strip_mood(h)                       # 先清旧块（换期重跑 / 模板被污染时）
     if not os.path.exists(MOOD_BLOCK):
-        print("  · 跳过七章（缺 data/mood_block.html，先跑 build_mood_block.py）", flush=True)
+        print("  · 跳过六章（缺 data/mood_block.html，先跑 build_mood_block.py）", flush=True)
         return h
     blk = open(MOOD_BLOCK, encoding="utf-8").read().strip()
 
@@ -276,16 +290,23 @@ def insert_mood_block(h):
         assert end > 0, "找不到 </style>"
         h = h[:end] + m.group(1).strip() + "\n" + h[end:]
 
-    foot = '<p class="muted" style="margin-top:26'
-    k = h.find(foot)
-    if k < 0:                                  # 兜底：插在 </body> 前
-        k = h.rfind("</body>")
-        assert k > 0, "找不到页脚，无法插入七章"
+    k = h.find("七、" + HELP_TITLE)             # 让位给「如何更新最新一季股池」
+    if k > 0:                                  # 往前退到该段的容器起点
+        for tag in ('<h2', '<div class="card"', '<section'):
+            j = h.rfind(tag, 0, k)
+            if j > 0:
+                k = j
+                break
+    else:                                      # 兜底：插在页脚之前
+        k = h.find('<p class="muted" style="margin-top:26')
+        if k < 0:
+            k = h.rfind("</body>")
+        assert k > 0, "找不到插入位置，无法插入情绪模块"
     return h[:k] + f"\n{MOOD_BEGIN}\n{blk}\n{MOOD_END}\n" + h[k:]
 
 
 def build():
-    h = clean(open(TPL, encoding="utf-8").read())
+    h = renumber_help(clean(open(TPL, encoding="utf-8").read()))
     D = json.load(open(os.path.join(OUT, "page_content.json"), encoding="utf-8"))
     P, bt, perf, pos, recent, kpi, meta = (D["periods"], D["bt"], D["perf"], D["pos"],
                                            D["recent"], D["kpi"], D["meta"])
@@ -398,7 +419,7 @@ def build():
                   "（取代原「前 3 名各 16%」）；三道筛后通常剩 18~22 只，"
                   "KPI 与各期表头写的都是筛后实际持仓数</b>")
     marks = ["5.1　因子动量·横截面 CSFM", "5.2　因子动量·时间序列 TSFM",
-             "5.3　质量Top28组合", "六、如何更新最新一季股池"]
+             "5.3　质量Top28组合", "七、" + HELP_TITLE]
     keys = ["CSFM", "TSFM", "Q28"]
     for i, k in enumerate(keys):
         s0 = h.find(marks[i])
@@ -414,7 +435,7 @@ def build():
         seg = re.sub(r'本期持仓（\d+ 只）', f'本期持仓（{n_now} 只）', seg)
         h = h[:s0] + seg + h[s1:]
 
-    # ---- ⑥ 六章「如何更新最新一季股池」的流程说明
+    # ---- ⑥ 六章「如何更新最新一季股池」的流程说明（原六章，编号已后移）
     h = h.replace(
         "拉取最新一期三大报表（标的池为动态中证800成分股，随指数成分定期调整）。",
         f"拉取最新一期三大报表（标的池为全市场总市值 ≥ {MCAP_MIN} 亿元的个股，"
@@ -423,7 +444,7 @@ def build():
         "按申万三级行业取评分前 5，生成新一期股池并写入本页。",
         f"按申万三级行业取评分前 {TOPN_IND}，生成新一期股池并写入本页。")
 
-    # ---- ⑦ 七章「市场情绪展望」：研报目标价 + 情绪拆解（人工核验快照）
+    # ---- ⑦ 六章「市场情绪展望」：研报目标价 + 情绪拆解（人工核验快照）
     h = insert_mood_block(h)
 
     # 版式标记：refresh_page.py 见到它就交棒（结构与 v3 相同，只能靠显式标记区分）

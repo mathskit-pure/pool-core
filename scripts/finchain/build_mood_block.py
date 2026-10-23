@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成页面第七模块《市场情绪展望》的 HTML 片段。
+"""生成页面第六模块《市场情绪展望》的 HTML 片段。
 
 数据源：data/mood_q28.json（人工研报检索结果的结构化沉淀）
 产物：data/mood_block.html（插入到主页面页脚之前）
@@ -248,7 +248,7 @@ def build(d):
 </div>"""
 
     return f"""{CSS}
-<h2>七、市场情绪展望</h2>
+<h2>六、市场情绪展望</h2>
 <div class="card">
 <div class="card-h"><h3>最新一期持仓 · 卖方目标价与情绪拆解</h3>
 <span class="pill">{m["n_holdings"]} 只 · {m["rebal_date"]} 调仓 · T 日 {m["t_date"]}</span></div>

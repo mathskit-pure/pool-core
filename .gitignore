@@ -13,12 +13,16 @@ data/*
 # 必须入库：云端靠它决定走 scripts/finchain/rebuild_page.py，
 # 而不是已废弃的整页重绘链路。缺了会被当成 legacy。
 !data/page_engine.txt
-# mood_q28.json 是页面第七章《市场情绪展望》的唯一输入：每期持仓的
+# mood_q28.json 是页面第六章《市场情绪展望》的唯一输入：每期持仓的
 # T 日股价、研报目标价区间、情绪拆解与风险提示。数据来自人工检索研报后
 # 核验固化，云端无法重建（研报接口无历史快照、也无法自动判断"表面措辞"）。
-# 必须入库，否则云端每日重建时第七章会整块消失。
+# 必须入库，否则云端每日重建时第六章会整块消失。
 # 产物 data/mood_block.html 由 build_mood_block.py 从它生成，不入库。
 !data/mood_q28.json
+# coverage_label_all.csv 是候选池 334 只的机构覆盖标签（cov_months /
+# cov_insts / thick|thin|none）。由 neodata.ratings 逐只检索后固化，
+# 重建需数百次接口调用，故随代码入库，供无覆盖情景回测复现。
+!data/coverage_label_all.csv
 
 output/
 .workbuddy/
