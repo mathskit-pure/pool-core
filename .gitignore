@@ -27,6 +27,11 @@ data/*
 # 含 target_avg_price 与 institution_rating 逐月分布）。接口只回最近 6 个月，
 # 过期即永久不可复现，故随代码入库。
 !data/ratings19.json
+# mood19_ext.json 是第六章「未来三年 EPS / PE」列与研报抽屉的数据：19 只持仓的
+# 东财 F10 一致预期 + 近 180 天研报明细（含 infoCode 原文链接），由
+# fetch_mood_ext.py 抓取。必须入库——否则云端每日重建时 EPS 列会全部降级成
+# 「无盈利预测」、研报抽屉变成零覆盖空态。
+!data/mood19_ext.json
 
 output/
 .workbuddy/

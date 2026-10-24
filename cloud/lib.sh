@@ -35,6 +35,10 @@ export AFGI_DIR="$AFGI_DIR"
 # 未显式指定时不导出，留给 paths.py 按候选路径探测（与 AFGI cloud/publish.py 同一套候选）
 [[ -n "${WB_LIBRARY_SKILL:-}" ]] && export WB_LIBRARY_SKILL
 
+# 云端每日重建页面时顺带刷新第六章的外部数据（19 只的 F10 一致预期 + 近 180 天
+# 研报明细，约 40 秒）。不设也会重建——data/mood19_ext.json 入库，用最近一次快照。
+export MOOD_REFRESH_EXT=1
+
 log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 warn() { printf '[%s] !! %s\n' "$(date '+%H:%M:%S')" "$*" >&2; }
 die()  { printf '[%s] !! %s\n' "$(date '+%H:%M:%S')" "$*" >&2; exit "${2:-1}"; }

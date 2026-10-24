@@ -8,10 +8,15 @@
     ④ build_mood_block.py 研报情绪片段（第六章）data/mood_block.html
     ⑤ patch_page.py       在 data/page_base.html 上原位替换内容
 
+第六章还依赖 data/mood19_ext.json（三年一致预期 + 研报明细，供 EPS 列与研报抽屉使用）。
+它由 fetch_mood_ext.py 抓取（全市场 180 天研报分页 + 19 只 F10 一致预期，约 40 秒），
+不放进默认链路（每天重建没必要抓两遍网），需要更新时加 --refresh-ext。
+
 之后可选上传（覆写固定节点编辑态）与发布（同步外部网页快照）。
 
 用法：
     python scripts/finchain/rebuild_page.py                  # 只重建本地页面
+    python scripts/finchain/rebuild_page.py --refresh-ext    # 先重抓第六章一致预期/研报明细
     python scripts/finchain/rebuild_page.py --upload         # 重建 + 覆写资料库节点
     python scripts/finchain/rebuild_page.py --upload --publish   # 再同步外部网页
 
@@ -125,10 +130,17 @@ def main():
     ap.add_argument("--publish", action="store_true", help="重新发布，同步外部网页快照")
     ap.add_argument("--skip-nav", action="store_true", help="跳过净值展开，直接用现有 out15 产物")
     ap.add_argument("--no-roll", action="store_true", help="跳过第六章股价刷新与变化比对")
+    ap.add_argument("--refresh-ext", action="store_true",
+                    help="先重抓第六章三年一致预期 + 研报明细（fetch_mood_ext.py，约 40 秒）")
     a = ap.parse_args()
 
     if not os.path.exists(PAGE_BASE):
         raise SystemExit(f"! 缺少原版模板：{PAGE_BASE}")
+
+    if a.refresh_ext or os.environ.get("MOOD_REFRESH_EXT") == "1":
+        # 云端由 lib.sh 导出 MOOD_REFRESH_EXT=1，每日顺带刷一次（约 40 秒，失败降级用库里的旧快照）。
+        log("[0/5] 第六章外部数据：F10 一致预期 + 近 180 天研报明细")
+        run([PY, os.path.join(HERE, "fetch_mood_ext.py")], timeout=1800)
 
     if not a.skip_nav:
         log("[1/5] 选股 + 日频净值")
