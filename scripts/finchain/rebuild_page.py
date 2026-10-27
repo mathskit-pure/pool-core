@@ -178,7 +178,17 @@ def main():
 
     skill = library_skill()
     log("上传（覆写编辑态）")
-    run([PY, skill / "page" / "import_html.py", PAGE, "--node-block-id", NODE], timeout=1800)
+    # COS 直传若走本地/沙箱代理，隧道会 502（2026-10-27 实测 Tunnel connection failed），
+    # 而 import_html.py 对 PUT 失败是静默返回 {"error": ...} + 退出码 0，会被当成成功。
+    # 这里强制让 COS 域名绕过代理，并且校验返回值里必须出现 KS_IMPORT_OK。
+    _np = ",".join(filter(None, [os.environ.get("NO_PROXY", ""),
+                                 "myqcloud.com,.myqcloud.com"]))
+    os.environ["NO_PROXY"] = os.environ["no_proxy"] = _np
+    out = run([PY, skill / "page" / "import_html.py", PAGE,
+               "--node-block-id", NODE, "--file-name", "舞弊调整质量因子季度动态股池.html"],
+              timeout=1800)
+    if "KS_IMPORT_OK" not in out:
+        raise SystemExit("! 上传未成功（未返回 KS_IMPORT_OK），线上保持原状：" + out.strip()[-300:])
     log(f"✓ 已覆写节点 {NODE}")
 
     if a.publish:
