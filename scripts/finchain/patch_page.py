@@ -405,6 +405,17 @@ def build():
     seg = seg.replace('stroke="#8e44ad"', 'stroke="#3d6fb5"')
     h = h[:a] + seg + h[b:]
 
+    # ---- ③b 情景对比区块（三章末尾）----
+    # 「股池限定为行业市值前50 × 各行业前3」的 A/B 测算。片段由 scn_ind50_block.py 生成后
+    # 落在 data/scn_ind50_block.html；**必须在这里注入**，否则每日/每季从模板重建时会被抹掉。
+    # 文件不存在就整块跳过（没跑过该情景的机器不该凭空多出一章）。
+    SCNB = os.path.join(DATA, "scn_ind50_block.html")
+    if os.path.exists(SCNB) and "scnInd50" not in h:
+        blk = open(SCNB, encoding="utf-8").read().strip()
+        k = h.find("<h2>四、CSFM")
+        assert k > 0, "找不到四章边界，无法插入情景区块"
+        h = h[:k] + blk + "\n\n" + h[k:]
+
     # ---- ④ 四章 var POS + 当前仓位
     pos_json = json.dumps(pos, ensure_ascii=False, separators=(",", ":"))
     h = re.sub(r'var POS=\{.*?\};', lambda m: f'var POS={pos_json};', h, count=1, flags=re.S)

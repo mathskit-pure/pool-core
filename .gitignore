@@ -41,3 +41,11 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# scn_ind50_block.html 是「股池限定为申万三级行业市值前50 × 各行业前3」的
+# A/B 情景区块（挂在三章末尾）。patch_page.py 每次重建都会把它注入，
+# 所以文件必须入库：云端重建时若缺失，这一块会被静默抹掉。
+# data/scn_ind50/ 归档两套净值与持仓（base / ind50），供 scn_ind50_block.py 重算区块。
+!data/scn_ind50_block.html
+!data/scn_ind50/
+!data/scn_ind50/**

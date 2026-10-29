@@ -33,6 +33,9 @@ FACTORS = ["size", "bm", "roa", "accr", "cp", "ep", "illiq", "turn", "bab", "ivo
 CS_N, CS_K = 20, 1.5
 TS_N, TS_K = 30, 1.0
 TOP_N = 28
+# 股池文件名：默认生产线用的 pools_v5.csv；情景测试用环境变量指向别的池，
+# 保证「换池」只是换一个输入文件，选股/加权/回测代码一行不动。
+POOLS_FILE = os.environ.get("POOL_FILE_V5") or "pools_v5.csv"
 
 # ── 统计窗口起点（2026-10-23 定）──
 # 2015-2016 含三轮股灾、2016 年首个交易日熔断与千股停牌：期间大量标的连续跌停、
@@ -128,7 +131,7 @@ def csfm_tsfm_picks():
     Fm.columns = FACTORS
 
     # 新标的池：股池（申万三级各取 FAQ 前 3）。组合只在当期股池内选股。
-    pools = pd.read_csv(os.path.join(D15, "pools_v5.csv"), dtype={"code": str})
+    pools = pd.read_csv(os.path.join(D15, POOLS_FILE), dtype={"code": str})
     pools["code"] = pools["code"].str.zfill(6)
     pool_by_asof = pools.groupby("asof")["code"].apply(set).to_dict()
     pool_asofs = sorted(pool_by_asof)
@@ -200,7 +203,7 @@ def quality_picks():
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import quality_v2 as Q2
 
-    pools = pd.read_csv(os.path.join(D15, "pools_v5.csv"), dtype={"code": str})
+    pools = pd.read_csv(os.path.join(D15, POOLS_FILE), dtype={"code": str})
     pools["code"] = pools["code"].str.zfill(6)
     pools["grp"] = pools["sw3"].fillna("未分类")
     by_asof = {a: g.copy() for a, g in pools.groupby("asof")}
