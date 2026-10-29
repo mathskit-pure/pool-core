@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""生成「三、组合回测」末尾的情景对比区块 HTML（data/scn_ind50_block.html）。
+"""情景对比的 HTML 片段与绘图/表格工具函数。
 
-由 patch_page.py 在 ③ 三章替换后自动注入，因此每日/每季重建都不会丢掉这一块。
+**注意**：本脚本已不再接入托管页面的重建链路（patch_page.py 的注入已撤销），
+情景结论以独立报告交付，见 scn_ind50_report.py。这里保留的 perf / svg_chart / pool_table
+等函数供报告脚本复用；直接运行仍会输出 data/scn_ind50_block.html（片段，供临时查看）。
+
 重跑情景时：build_pools_v6_ind50.py → scenario_ind50.py，把两套净值放回
- data/scn_ind50/{base,ind50}/，再跑本脚本刷新区块。
-
-输入：scn/base、scn/ind50 两套净值与持仓；pools_v5 / pools_v6_ind50 / industry_rank
-输出：scn/scn_block.html
+ data/scn_ind50/{base,ind50}/，再跑 scn_ind50_report.py 出报告。
 """
 import os
 import sys
@@ -65,8 +65,14 @@ def svg_chart(B, S):
     for nm, _, _ in COMBOS:
         vals.append(B[nm].to_numpy()[idx])
         vals.append(S[nm].to_numpy()[idx])
-    ymin = float(np.nanmin([np.nanmin(v) for v in vals]) * 0.97)
-    ymax = float(np.nanmax([np.nanmax(v) for v in vals]) * 1.03)
+    lo = float(np.nanmin([np.nanmin(v) for v in vals]))
+    hi = float(np.nanmax([np.nanmax(v) for v in vals]))
+    # 取整刻度：步长限定在 {1,2,2.5,5}×10^k，避免出现 0.89 / 1.48 这类难读的轴标
+    raw = (hi - lo) / 6.0
+    mag = 10.0 ** np.floor(np.log10(raw))
+    ystep = next(m * mag for m in (1, 2, 2.5, 5, 10) if raw <= m * mag)
+    ymin = float(np.floor(lo / ystep) * ystep)
+    ymax = float(np.ceil(hi / ystep) * ystep)
 
     def X(i):
         return L + w * i / (len(idx) - 1)
@@ -78,13 +84,13 @@ def svg_chart(B, S):
          f'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif">',
          f'<rect x="0" y="0" width="{W}" height="{H}" fill="#ffffff"/>']
     # y 网格
-    nt = 6
+    nt = int(round((ymax - ymin) / ystep)) + 1
     for k in range(nt):
-        v = ymin + (ymax - ymin) * k / (nt - 1)
+        v = ymin + ystep * k
         y = Y(v)
         p.append(f'<line x1="{L}" x2="{L+w}" y1="{y:.1f}" y2="{y:.1f}" stroke="#eef0f3"/>')
         p.append(f'<text x="{L-8}" y="{y+4:.1f}" fill="#6b7280" font-size="11" '
-                 f'text-anchor="end">{v:.2f}</text>')
+                 f'text-anchor="end">{v:g}</text>')
     # x 刻度
     for t in range(6):
         i = round((len(idx) - 1) * t / 5)
