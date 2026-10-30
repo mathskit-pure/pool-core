@@ -33,9 +33,27 @@ FACTORS = ["size", "bm", "roa", "accr", "cp", "ep", "illiq", "turn", "bab", "ivo
 CS_N, CS_K = 20, 1.5
 TS_N, TS_K = 30, 1.0
 TOP_N = 28
-# 股池文件名：默认生产线用的 pools_v5.csv；情景测试用环境变量指向别的池，
-# 保证「换池」只是换一个输入文件，选股/加权/回测代码一行不动。
-POOLS_FILE = os.environ.get("POOL_FILE_V5") or "pools_v5.csv"
+# ── 股池文件：按组合分派（2026-10-30 起）──
+# 动量两组合（CSFM / TSFM）改用「行业市值前 50 × 各行业 FAQ 前 3」的受限池，
+# 依据是 2026-10-29 的 A/B 测算：CSFM 年化 3.67%→9.84%、回撤 −52.2%→−37.6%；
+# TSFM 收益几乎不变（8.91%→8.87%）但回撤 −42.0%→−38.8%，风险更低。
+# 质量Top28 仍用原池（全行业）—— 换池会让它年化从 10.34% 掉到 6.47%，
+# 且二章「季度股池」的口径必须保持不变，故不动。
+# 换池只换输入文件，选股 / 加权 / 成本 / 执行时点代码一行未改。
+# POOL_FILE_V5 是复现与情景测试的总开关：一旦设置，两个组合同时指向该文件
+# （scenario_ind50.py 依赖这一点做「三组合同池」对照）。
+def pool_file(combo="CSFM"):
+    """返回该组合当期使用的股池文件名（运行时读环境变量，便于情景脚本中途改写）。"""
+    force = os.environ.get("POOL_FILE_V5")
+    if force:
+        return force
+    if combo == "Q28":
+        return os.environ.get("POOL_FILE_Q28") or "pools_v5.csv"
+    return os.environ.get("POOL_FILE_MOM") or "pools_v6_ind50.csv"
+
+
+# 兼容旧引用（历史上是单一常量）；新代码请用 pool_file(combo)
+POOLS_FILE = pool_file()
 
 # ── 统计窗口起点（2026-10-23 定）──
 # 2015-2016 含三轮股灾、2016 年首个交易日熔断与千股停牌：期间大量标的连续跌停、
@@ -130,8 +148,11 @@ def csfm_tsfm_picks():
     Fm = cr[[f"F_{f}" for f in FACTORS]].copy()
     Fm.columns = FACTORS
 
-    # 新标的池：股池（申万三级各取 FAQ 前 3）。组合只在当期股池内选股。
-    pools = pd.read_csv(os.path.join(D15, POOLS_FILE), dtype={"code": str})
+    # 候选域：动量组合专用池（默认「行业市值前 50 × 各行业 FAQ 前 3」）。
+    # 组合只在当期该池内选股；其余(因子收益、Z 分数、门控)与全行业口径完全一致。
+    POOL = pool_file("CSFM")
+    print(f"  [池] CSFM/TSFM ← {POOL}", flush=True)
+    pools = pd.read_csv(os.path.join(D15, POOL), dtype={"code": str})
     pools["code"] = pools["code"].str.zfill(6)
     pool_by_asof = pools.groupby("asof")["code"].apply(set).to_dict()
     pool_asofs = sorted(pool_by_asof)
@@ -203,7 +224,10 @@ def quality_picks():
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import quality_v2 as Q2
 
-    pools = pd.read_csv(os.path.join(D15, POOLS_FILE), dtype={"code": str})
+    # 质量组合保持原池（全行业），与二章「季度股池」同一份文件
+    POOL = pool_file("Q28")
+    print(f"  [池] Q28      ← {POOL}", flush=True)
+    pools = pd.read_csv(os.path.join(D15, POOL), dtype={"code": str})
     pools["code"] = pools["code"].str.zfill(6)
     pools["grp"] = pools["sw3"].fillna("未分类")
     by_asof = {a: g.copy() for a, g in pools.groupby("asof")}

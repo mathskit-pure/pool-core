@@ -20,7 +20,9 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # 路径统一由 scripts/paths.py 解析（本机 Windows 与云端 Linux 同一份代码）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from paths import DATA, FIN_OUT as OUT  # noqa: E402
+from paths import DATA, FIN_D15 as D15, FIN_OUT as OUT  # noqa: E402
+
+import pandas as pd  # noqa: E402
 
 TPL = os.path.join(DATA, "page_base.html")
 
@@ -346,6 +348,34 @@ def build():
     a = h.find('<h2>三、组合回测')
     b = h.find('<h2>四、CSFM 和 TSFM')
     seg = h[a:b]
+    # 标题补一句：标的池虽是全行业股池，但动量两组合另有行业准入限制
+    seg = seg.replace('三、组合回测（标的池 = 上述动态股池）',
+                      '三、组合回测（标的池 = 上述动态股池；CSFM / TSFM 另限行业市值前 50）',
+                      1)
+
+    # ③a 候选域变更（2026-10-30）：CSFM / TSFM 改用「行业市值前 50 × 各行业前 3」池。
+    # 只改这两个组合的候选域；质量Top28 与二章「季度股池」口径一字不动，
+    # 因此这段说明只插在 CSFM/TSFM 段落内，不碰全章通用口径。
+    _v6 = pd.read_csv(os.path.join(D15, "pools_v6_ind50.csv"), dtype={"code": str})
+    _last = _v6["asof"].max()
+    _g6 = _v6[_v6["asof"] == _last]
+    scn_ind, scn_stk = int(_g6["sw3"].nunique()), int(len(_g6))
+    _scn = (
+        "<b>候选域（2026-10-30 起变更）</b>：CSFM / TSFM 不再对全行业动态股池选股，"
+        "改为两级限制 —— ① 行业准入：按「申万行业总市值」（该行业全部 A 股的时点总市值加总）"
+        "降序保留 <b>前 50 个行业</b>；② 行业名额：每个准入行业取 FAQ 评分<b>前 3</b>。"
+        f"最新一期（{_last}）为 <b>{scn_ind}</b> 个行业 / <b>{scn_stk}</b> 只候选，"
+        "股池规模约为全行业池的三成。因子收益、个股 Z 分数、F 门控与加权规则一律未动，"
+        "差异只来自候选域，因此可直接与旧口径对比。"
+        "<b>取舍依据（切换时点 2026-10-30，窗口 2017-01-03→2026-10-16）</b>："
+        "CSFM 年化 3.67%→9.84%、回撤 −52.2%→−37.6%、夏普 0.17→0.45；"
+        "TSFM 年化 8.91%→8.87%（几乎不变）而回撤 −42.0%→−38.8%，属同收益、更低风险。"
+        "<b>质量Top28 不适用该限制</b>：其超额主要来自中小市值行业里的高质量公司，"
+        "加限制后年化会从 10.34% 掉到 6.47%，故仍按二章全行业股池选股。"
+    )
+    # 段落用 white-space:pre-wrap，前后各加一个换行 → 新口径独立成段，长段落才读得下去
+    seg = seg.replace("每月末在当期股池内计算 10 个非动量因子",
+                      "\n" + _scn + "\n每月末在当期股池内计算 10 个非动量因子", 1)
 
     # 说明文字：起点、CSFM/TSFM 参数、基准
     seg = seg.replace("回测自 <b>2019-05-06</b> 起。",
@@ -359,6 +389,9 @@ def build():
     seg = seg.replace(
         '取当期股池内得分最高的 <b>30 只等权持有、月度调仓</b>',
         '取当期股池内得分最高的 <b>CSFM 20 只 / TSFM 30 只等权持有、月度调仓</b>')
+    # 候选域已收缩（见 ③a），"当期股池内"容易读成全行业池，改成"受限候选域内"
+    seg = seg.replace('取当期股池内得分最高的 <b>CSFM 20 只',
+                      '取<b>受限候选域</b>内得分最高的 <b>CSFM 20 只')
     seg = seg.replace(
         '个股得分 = Σ（因子动量权重 × 个股标准化暴露）/ √10',
         '个股得分 = Σ（因子动量权重 × 个股标准化暴露）/ √10')
