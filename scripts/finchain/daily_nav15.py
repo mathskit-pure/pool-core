@@ -28,6 +28,12 @@ from paths import FIN_D15 as D15, FIN_OUT as OUT  # noqa: E402
 os.makedirs(OUT, exist_ok=True)
 
 COST = 0.0010
+# ── 执行口径（2026-11-01 重写）──
+# 页面第三章明写「T 日收盘决策、T+1 开盘执行；开盘一字涨停无法建仓者权重记 0、
+# 以现金持有；单边 10bp」。旧 build_nav 只在决策日收盘价建仓、只吃 close-to-close
+# 收益 —— 等于省掉隔夜跳空、且把一字板当成能买到，两处都指向高估。
+LIMIT_TOL = 1e-6        # 一字板判定：当日 high == low 的相对容差
+ONE_PRICE_MIN = 0.045   # 一字板最小涨跌幅（4.5% 下限覆盖 ST 的 5% 档）
 FACTORS = ["size", "bm", "roa", "accr", "cp", "ep", "illiq", "turn", "bab", "ivol"]
 # 主口径（2017-2026，见 out15/perf_from2017.csv）
 CS_N, CS_K = 20, 1.5
@@ -76,30 +82,35 @@ def perf_daily(nav):
             "卡玛": ann / abs(dd) if dd < 0 else np.nan, "交易日": n}
 
 
-def filt_tradable(reb, C, combo=""):
-    """调仓日不可交易（当天无成交价 = 停牌/未上市）的标的剔除，权重重新归一。
+def filt_tradable(reb, OPEN, combo="", cal=None, last=None):
+    """执行日（T+1）开盘无价 = 停牌/未上市/已退市 → 剔除，权重重新归一。
 
-    为什么必须过滤：`build_nav` 对持仓期内的停牌日按「收益记 0（价格冻结）」处理，
-    但**调仓日当天就停牌的票会被按停牌前最后价"买入"**，等复牌那天把整段涨跌幅
-    一次性记进净值 —— 那是实盘买不到的收益。2015-09 那期持仓有 25% 权重处于停牌，
-    2021-08 盐湖股份复牌单日 +200.8% 就是最典型的虚增来源。
+    口径变化：旧实现用**决策日收盘价**判停牌，与「T+1 开盘成交」不符 ——
+    决策日停牌、次日复牌能买到的票会被误杀；决策日有价、次日无价的票会被误留。
+    现在改为判执行日开盘价。执行日尚不存在的最后一期（决策已定、还没开盘）
+    不做过滤，保留名单供页面展示，净值自然也不会执行到它。
 
-    与 fix_consistency15.filt_tradable 同口径，供生产链路复用。
+    停牌在持有期内按「价格冻结、收益记 0」处理（见 _panels 的 ffill），
+    避免复牌当天把整段涨跌幅一次性记进净值（2021-08 盐湖股份 +200.8% 的虚增来源）。
 
     返回 (过滤后的 picks, 剔除明细 list)。
     """
+    cal = cal if cal is not None else OPEN.index
     out, dropped = {}, []
     for d, w in reb.items():
-        if d not in C.index:
+        pos = int(cal.searchsorted(pd.Timestamp(d), side="right"))
+        e = cal[pos] if pos < len(cal) else None
+        if e is None or e not in OPEN.index:       # 还没开盘 → 不过滤
             out[d] = w
             continue
-        row = C.loc[d]
+        row = OPEN.loc[e]
         ok = [c for c in w.index if c in row.index and pd.notna(row[c])]
         for c in w.index:
             if c not in ok:
                 dropped.append({"combo": combo, "rebal_date": d.strftime("%Y-%m-%d"),
-                                "code": c, "weight": float(w[c]),
-                                "reason": "调仓日停牌/无价"})
+                                "exec_date": e.strftime("%Y-%m-%d"), "code": c,
+                                "weight": float(w[c]),
+                                "reason": "执行日停牌/无开盘价"})
         if not ok:                      # 全期无一只可买 → 该期空仓（极罕见）
             continue
         ww = w.reindex(ok)
@@ -107,34 +118,125 @@ def filt_tradable(reb, C, combo=""):
     return out, dropped
 
 
-def build_nav(rebal, R, last_date):
-    """rebal: {决策日: Series(code->w)}。返回逐日净值 Series。"""
-    segs = sorted(rebal)
-    out = {}
-    cur = 1.0
-    prev = None
-    for i, d in enumerate(segs):
-        w = rebal[d]
-        end = segs[i + 1] if i + 1 < len(segs) else last_date
-        codes = list(w.index)
-        turn = 1.0 if prev is None else 0.5 * len(set(codes) ^ set(prev)) / max(len(codes), 1)
-        cur *= (1.0 - turn * 2 * COST)
-        out[d] = cur
-        days = R.index[(R.index > d) & (R.index <= end)]
-        if len(days) == 0:
-            prev = codes
-            continue
-        sub = R.loc[days, codes]
-        # 停牌/未上市 → 当日收益记 0（价格冻结），与「当日无成交」一致
-        sub = sub.fillna(0.0)
-        cum = (1.0 + sub).cumprod()
-        val = (cum.to_numpy() * w.to_numpy()).sum(axis=1)
-        for t, v in zip(days, val):
-            out[t] = cur * float(v)
-        cur *= float(val[-1])
-        prev = codes
-    s = pd.Series(out).sort_index()
-    return s
+def _panels(px):
+    """从日线宽表构造执行口径面板（全部对齐到同一交易日 × 代码网格）。
+
+    ret   : 收盘 / 前一有效收盘 - 1     （持有期日收益）
+    gap   : 开盘 / 前一有效收盘 - 1     （隔夜跳空，旧仓在 T+1 开盘卖出前承担）
+    intra : 收盘 / 开盘 - 1             （日内，新仓在 T+1 开盘买入后承担）
+    buy_ok / sell_ok: T+1 开盘能否买入 / 卖出（排除一字板与无价）
+
+    为什么用「前一有效收盘」而不是「前一交易日收盘」：停牌日没有行情行，
+    直接 shift 会让复牌日的 gap 变成 NaN。ffill 后 shift 等价于用停牌前最后
+    成交价，这才是实盘可用的基准。
+    """
+    px = px[["date", "code", "open", "high", "low", "close"]].copy()
+    px["code"] = px["code"].astype(str).str.zfill(6)
+    m = {c: px.pivot(index="date", columns="code", values=c).sort_index()
+         for c in ("open", "high", "low", "close")}
+    close, open_, high, low = m["close"], m["open"], m["high"], m["low"]
+    cf = close.ffill()
+    prev = cf.shift(1)
+    ret = cf.pct_change()
+    gap = open_ / prev - 1.0
+    intra = close / open_ - 1.0
+    flat = (high - low).abs() <= (close.abs() * LIMIT_TOL)      # 当日只有一个价
+    up1 = flat & (gap >= ONE_PRICE_MIN) & (gap <= 0.35)         # 一字涨停（含 20/30% 档）
+    dn1 = flat & (gap <= -ONE_PRICE_MIN) & (gap >= -0.35)       # 一字跌停
+    return {"cal": close.index, "ret": ret, "gap": gap, "intra": intra,
+            "buy_ok": open_.notna() & ~up1, "sell_ok": open_.notna() & ~dn1,
+            "open": open_, "close": close}
+
+
+def _rebalance(hold, nav_pre, w, ti, cols, Bv, Sv, cost_rate):
+    """按目标权重 w 调仓（含交易成本与涨跌停约束），返回 (新持仓 dict, 现金)。
+
+    hold: {code: 金额}（以当前净值为 1 计）；nav_pre: 调仓前净值。
+    约束：一字跌停卖不掉 → 该只不动；一字涨停买不到 → 只能减不能加。
+    """
+    wd = {str(c): float(v) for c, v in w.items()}      # 注意：set(Series) 取的是值不是索引
+    # 一字跌停 / 停牌 → 卖不掉，这部分市值被「锁定」，先占住资金；
+    # 否则会拿全款再买一遍新仓，形成双重持仓（2020-02-03 千股跌停曾算出 +30%）。
+    locked = {}
+    for c in hold:
+        j = cols.get(c)
+        if j is not None and not bool(Sv[ti, j]):
+            locked[c] = hold[c]
+    budget = max(nav_pre - sum(locked.values()), 0.0)
+    tgt = {c: budget * v for c, v in wd.items()}
+    delta = {}
+    for c in set(hold) | set(wd):
+        h = hold.get(c, 0.0)
+        j = cols.get(c)
+        can_buy = bool(Bv[ti, j]) if j is not None else True
+        if c in locked:
+            delta[c] = 0.0                       # 一字跌停：被动延续
+        elif c in wd and not can_buy:
+            delta[c] = -h                        # 一字涨停：只能卖不能买
+        else:
+            delta[c] = tgt.get(c, 0.0) - h
+    turn = 0.5 * sum(abs(v) for v in delta.values()) / max(nav_pre, 1e-12)
+    k = 1.0 - turn * 2.0 * cost_rate
+    new = {}
+    for c in set(hold) | set(wd):
+        v = (hold.get(c, 0.0) + delta.get(c, 0.0)) * k
+        if v > 1e-10:
+            new[c] = v
+    return new, max(nav_pre * k - sum(new.values()), 0.0)
+
+
+def build_nav(rebal, P, last_date):
+    """rebal: {决策日: Series(code->w)}。返回逐日净值 Series。
+
+    T 日收盘决策 → T+1 开盘成交 → 持有到下一执行日开盘。执行日当天收益拆两段：
+    旧仓先承担隔夜跳空（open/prevclose），换仓后新仓承担日内（close/open）。
+    """
+    cal = P["cal"]
+    cols = {c: i for i, c in enumerate(P["ret"].columns)}
+    row = {d: i for i, d in enumerate(cal)}
+    Rv, Gv, Iv = P["ret"].to_numpy(), P["gap"].to_numpy(), P["intra"].to_numpy()
+    Bv, Sv = P["buy_ok"].to_numpy(), P["sell_ok"].to_numpy()
+
+    ev = {}
+    for d in sorted(rebal):
+        pos = int(cal.searchsorted(pd.Timestamp(d), side="right"))
+        if pos < len(cal):
+            ev[cal[pos]] = pd.Timestamp(d)
+    if not ev:
+        return pd.Series(dtype=float)
+    days = cal[(cal >= min(ev)) & (cal <= pd.Timestamp(last_date))]
+
+    def g(mat, ti, code):
+        j = cols.get(code)
+        if j is None:
+            return 0.0
+        v = mat[ti, j]
+        return 0.0 if not np.isfinite(v) else float(v)
+
+    hold, cash, out = {}, 1.0, {}
+    n_skip = 0
+    for t in days:
+        ti = row[t]
+        if t in ev:
+            for c in list(hold):                       # ① 旧仓承担隔夜跳空
+                hold[c] *= 1.0 + g(Gv, ti, c)
+            nav_pre = sum(hold.values()) + cash
+            w = rebal[ev[t]]
+            # 一字涨停买不到的只数（仅统计，用于日志）
+            for c in w.index:
+                j = cols.get(c)
+                if j is not None and not Bv[ti, j]:
+                    n_skip += 1
+            hold, cash = _rebalance(hold, nav_pre, w, ti, cols, Bv, Sv, COST)
+            for c in list(hold):                       # ③ 新仓承担日内
+                hold[c] *= 1.0 + g(Iv, ti, c)
+        else:
+            for c in list(hold):
+                hold[c] *= 1.0 + g(Rv, ti, c)
+        out[t] = sum(hold.values()) + cash
+    if n_skip:
+        print(f"    [涨跌停] 开盘一字涨停无法建仓 {n_skip} 只次（权重转现金）", flush=True)
+    return pd.Series(out).sort_index()
 
 
 def csfm_tsfm_picks():
@@ -250,7 +352,10 @@ def quality_picks():
     for a in sorted(by_asof):
         nxt = trade[trade > pd.Timestamp(a)]
         if len(nxt) == 0:
-            continue
+            # 最新一期：决策已完成、执行日尚未开盘（行情止于上一交易日）。
+            # 用决策日后首个工作日作名义执行日 —— 名单要展示（页面第五章），
+            # build_nav 找不到该交易日时会自动跳过，净值不会执行到未来。
+            nxt = pd.DatetimeIndex([pd.Timestamp(a) + pd.offsets.BDay(1)])
         d = nxt[0]
         g = by_asof[a]
         ranked = g.sort_values("FAQ_score", ascending=False)
@@ -260,11 +365,15 @@ def quality_picks():
             continue
         sw3 = dict(zip(g["code"].astype(str), g["grp"]))
 
-        # 换手代理：(adv20, adv20 / 总市值)，只用调仓日 T 及之前的数据
-        a_row = amt20.loc[d] if d in amt20.index else None
+        # 换手代理：(adv20, adv20 / 总市值)，只用**决策时点可见**的行情 ——
+        # 决策发生在 asof 之后、执行日开盘之前，因此上界取 <= asof 的最后交易日，
+        # 而不是执行日 d 当天（那会用到 d 的收盘数据，属前视）。
+        obs = trade[trade <= pd.Timestamp(a)]
+        ref = obs[-1] if len(obs) else None
+        a_row = amt20.loc[ref] if ref is not None and ref in amt20.index else None
         mrow = None
         if len(mcap.index):
-            idx = mcap.index[mcap.index <= d]
+            idx = mcap.index[mcap.index <= (ref if ref is not None else pd.Timestamp(a))]
             if len(idx):
                 mrow = mcap.loc[idx[-1]]
         turn_map = {}
@@ -307,30 +416,38 @@ def quality_picks():
 def main():
     px = pd.read_pickle(os.path.join(D15, "px_daily.pkl"))
     px["code"] = px["code"].astype(str).str.zfill(6)
-    R = px.pivot(index="date", columns="code", values="ret").sort_index()
-    last = R.index[-1]
-    print(f"[px] 日收益 {R.shape[0]} 日 × {R.shape[1]} 只 {R.index[0]:%Y-%m-%d}~{last:%Y-%m-%d}", flush=True)
+    # 未来日期守卫：占位/预填行情会让「决策日之后的首个交易日」落到未来，
+    # 调仓日与一字板判定同时失真（2026-11 曾出现 2026-11-02 的复制行）。
+    today = pd.Timestamp.today().normalize()
+    fut = px[px["date"] > today]
+    if len(fut):
+        raise SystemExit(
+            f"px_daily.pkl 含 {len(fut):,} 行未来日期行情（最晚 {fut['date'].max():%Y-%m-%d}，"
+            f"今日 {today:%Y-%m-%d}）。请先清理占位行再重算。")
+    P = _panels(px)
+    cal, last = P["cal"], P["cal"][-1]
+    print(f"[px] 日收益 {P['ret'].shape[0]} 日 × {P['ret'].shape[1]} 只 "
+          f"{cal[0]:%Y-%m-%d}~{last:%Y-%m-%d}", flush=True)
 
     picks = csfm_tsfm_picks()
     picks["Q28"] = quality_picks()
 
-    # 调仓日可交易过滤：停牌/当天无价的标的不计入持仓，权重按剩余标的重新归一
-    close = px.pivot(index="date", columns="code", values="close").sort_index()
+    # 执行日（T+1）开盘无价的标的剔除，权重按剩余标的重新归一
     drops = []
     for nm in list(picks):
-        picks[nm], dp = filt_tradable(picks[nm], close, nm)
+        picks[nm], dp = filt_tradable(picks[nm], P["open"], nm, cal=cal, last=last)
         drops.extend(dp)
     if drops:
         pd.DataFrame(drops).to_csv(os.path.join(OUT, "dropped_untradable_15.csv"),
                                    index=False)
         by = pd.DataFrame(drops).groupby("combo").size().to_dict()
-        print(f"  [可交易过滤] 剔除 {len(drops)} 只次（调仓日停牌/无价）："
+        print(f"  [可交易过滤] 剔除 {len(drops)} 只次（执行日停牌/无开盘价）："
               f"CSFM {by.get('CSFM', 0)} / TSFM {by.get('TSFM', 0)} / Q28 {by.get('Q28', 0)}",
               flush=True)
 
     navs, holds = {}, []
     for nm, reb in picks.items():
-        s = build_nav(reb, R, last)
+        s = build_nav(reb, P, last)
         navs[nm] = s
         for d, w in reb.items():
             for c, v in w.items():
@@ -345,7 +462,10 @@ def main():
     # 裁到统计窗口：起点之前的数据已参与因子动量预热与期初持仓，此处只截断输出。
     if NAV_START:
         N = N[N.index >= pd.Timestamp(NAV_START)]
-        N = N / N.iloc[0]                       # 各列统一在窗口首日归一到 1.00
+        # 逐列用「该列首个有效值」归一：组合若在窗口起点尚无持仓（如股池历史期
+        # 不足），列首会是 NaN，旧写法 N/N.iloc[0] 会把整列打成 NaN。
+        base = N.apply(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan)
+        N = N / base
     for nm in N.columns:
         p = perf_daily(N[nm])
         print(f"  {nm:5} {N.index[0]:%Y-%m-%d}~{N.index[-1]:%Y-%m-%d} "

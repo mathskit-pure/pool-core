@@ -5,7 +5,7 @@
   1) 候选：当期股池内按 FAQ 得分降序、申万三级行业 ≤2 只，取满 LQ 只
   2) 流动性：20 日均成交额 < FLOOR 的剔除；剩余不足 MIN_KEEP 时放宽到 FLOOR_LOW
   3) 拥挤度：换手代理（20 日均成交额/总市值）在候选内部排序，剔除分位 > DROP_HI
-  4) 权重：w ∝ 1/(换手分位 + TAU)，限幅 [W_LO, W_HI] 迭代归一
+  4) 权重：w ∝ 1/(换手分位 + TAU)，水位法限幅 [W_LO, W_HI]（严格不越界）
 数据缺失时降级：没有换手数据的标的按中性分位（0.5）处理；整期无换手数据则退回 v1 权重。
 """
 from __future__ import annotations
@@ -21,17 +21,55 @@ W_LO, W_HI = 0.02, 0.08
 MIN_FINAL = 8          # 过滤后少于 8 只 → 判定规则失效，退回 v1
 
 
-def _cap_weights(w, lo=W_LO, hi=W_HI, iters=80):
-    """限幅 + 迭代归一（保证总和恰好为 1）"""
-    if not w:
+def _cap_weights(w, lo=W_LO, hi=W_HI, iters=None):
+    """限幅：水位法（water-filling），保证 Σ=1 且每只严格落在 [lo, hi]。
+
+    旧实现是「限幅 → 归一」反复迭代 80 次，但**最后一次归一又把上限拉破**：
+    19 只里若有 2 只触 8%、其余被压到 2%，此时 sum=0.92，末次归一给出
+    0.08/0.92 = 8.6957%，承诺的 8% 上限直接失效（601138、600188 实测值）。
+
+    水位法：先按比例分配；超上限的钉在上限、低于下限的钉在下限，扣掉已钉部分
+    后把剩余权重按比例分给「未触限」的标的，循环直到全部入界。
+    总和恒为 1，不需要最后再归一，因此不会二次越界。
+    """
+    n = len(w)
+    if n == 0:
         return []
-    s = sum(w)
-    w = [x / s for x in w]
-    for _ in range(iters):
-        w = [min(max(x, lo), hi) for x in w]
-        s = sum(w)
-        w = [x / s for x in w]
-    return w
+    s = float(sum(w))
+    if not (s > 0):
+        return [1.0 / n] * n
+    x = [float(v) / s for v in w]
+    # 可行性修正：n 只凑满 100%，单只上限至少 1/n、下限至多 1/n
+    hi = max(float(hi), 1.0 / n)
+    lo = min(float(lo), 1.0 / n)
+    fixed, free, rem = {}, list(range(n)), 1.0
+    while free:
+        sfree = sum(x[i] for i in free)
+        if not (sfree > 0):
+            for i in free:
+                fixed[i] = rem / len(free)
+            break
+        pend = {i: rem * x[i] / sfree for i in free}
+        over = [i for i in free if pend[i] > hi + 1e-12]
+        under = [i for i in free if pend[i] < lo - 1e-12]
+        if not over and not under:
+            for i in free:
+                fixed[i] = pend[i]
+            break
+        if over:                                   # 先压上限（更常见的越界方向）
+            for i in over:
+                fixed[i] = hi
+                rem -= hi
+            free = [i for i in free if i not in set(over)]
+        else:                                      # 再抬下限
+            for i in under:
+                fixed[i] = lo
+                rem -= lo
+            free = [i for i in free if i not in set(under)]
+        if rem <= 1e-12:                           # 约束冲突 → 等权兜底
+            eq = 1.0 / n
+            return [min(max(eq, lo), hi) for _ in range(n)]
+    return [fixed[i] for i in range(n)]
 
 
 def select_v2(cands, sw3, turn_map, lq=LQ, max_per_ind=MAX_PER_IND,
