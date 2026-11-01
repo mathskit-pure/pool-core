@@ -56,6 +56,24 @@ fi
 #
 # 默认不跑：发布动作对线上是覆盖式的，要求显式 PAGE=1。
 if [[ "${PAGE:-0}" == "1" ]]; then
+  # 名单层同步：页面二/五章读的是 data15/pools_v5.csv，而本任务只更新 pool-data 的
+  # pools.json —— 那一层云端生成不了（要全量财报与 FAQ 面板）。cloud/season/ 是本机
+  # 换季后提交的快照，若它比 data15 新，先覆盖过去，否则重建出来的还是旧一期。
+  SEASON_ASOF="$("$PY" -c "import pandas as pd;print(pd.read_csv('$POOL_DIR/cloud/season/pools_v5.csv')['asof'].max())" 2>/dev/null)"
+  D15_ASOF="$("$PY" -c "
+import sys, os, pandas as pd
+sys.path.insert(0, '$POOL_DIR/scripts')
+from paths import FIN_D15
+p = os.path.join(str(FIN_D15), 'pools_v5.csv')
+print(pd.read_csv(p)['asof'].max() if os.path.exists(p) else '')
+" 2>/dev/null)"
+  if [[ -n "$SEASON_ASOF" && "$SEASON_ASOF" > "$D15_ASOF" ]]; then
+    log "名单层落后：data15=$D15_ASOF → season=$SEASON_ASOF，先覆盖名单层"
+    bash "$HERE/fin_season.sh" --data-only || warn "名单覆盖失败，页面重建多半会被 stale_pool 闸门拦住"
+  elif [[ -n "$D15_ASOF" ]]; then
+    log "名单层已是最新（$D15_ASOF），无需覆盖"
+  fi
+
   log "===== 页面重建：节点 $PAGE_NODE ====="
   if ( cd "$POOL_DIR" && "$PY" scripts/finchain/rebuild_page.py --upload --publish ); then
     log "===== 页面重建完成 ====="
