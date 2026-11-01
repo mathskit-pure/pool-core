@@ -6,6 +6,11 @@
 data/*
 !data/pools.json
 !data/turnover_panel.csv
+# page_base.html 是 finchain-v5 的干净模板（不含数据块与情绪模块正文）。
+# 2026-11-01 起改为入库：模板里的口径文案（回测起点、次新过滤年限、执行时点）
+# 必须与代码同步改，只靠云端 seed_page_base.py 从线上拉取会出现「页面文案还是
+# 上一版」的静默漂移 —— 改完代码推上去，云端 git pull 才拿得到同一份模板。
+!data/page_base.html
 # page_data.json 是季度股池页的唯一输入（渲染器只吃它，不读 CSV）。
 # 入库后云端只需替换这一个文件即可重发布，不必重建整条财报链。
 !data/page_data.json
