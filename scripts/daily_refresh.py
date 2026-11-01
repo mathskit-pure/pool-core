@@ -40,6 +40,7 @@
     由脚本判断今天是不是调仓日并输出换仓指令，节奏才不会漂移。
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -117,6 +118,39 @@ def page_gate(path):
     if miss:
         return "产物缺少必需区块：" + "、".join(miss)
     return ""
+
+
+def pool_lag():
+    """股池是否落后于第六章已核验的调仓期（与 rebuild_page.stale_pool 同一口径）。
+
+    为什么每日链路也要这道闸门：
+    finchain-v5 下 daily_refresh 会调 rebuild_page.py 重建整页，再用**自己的**
+    page_gate 上传；而 rebuild_page 里的 stale_pool 闸门挂在 --upload 分支上，
+    daily_refresh 不传 --upload，于是那道闸门根本不参与 —— 2026-11-01 复查发现
+    这个绕行口子。data15 的 pools_v5.csv 只随换季变，云端若停在上一个报告期，
+    这里重建出的第二章就是旧一期、第六章（data/mood_q28.json 随代码入库）却是
+    新一期，上传后线上页面两天内就被退回（11-03 06:00 主刷新即会踩到）。
+    所以在上传前独立校验一次：股池落后即拒绝上传，线上保持原状。
+    """
+    mood = os.path.join(DATA, "mood_q28.json")
+    content = os.path.join(str(FIN_OUT), "page_content.json")
+    try:
+        rebal = str(json.load(open(mood, encoding="utf-8"))["meta"]["rebal_date"])
+        latest = str(json.load(open(content, encoding="utf-8"))["periods"][-1]["asof"])
+    except (OSError, KeyError, ValueError, IndexError):
+        return ""
+    if latest >= rebal:
+        return ""
+    try:
+        gap = (date.fromisoformat(rebal) - date.fromisoformat(latest)).days
+    except ValueError:
+        return ""
+    if gap <= 10:
+        return ""
+    return (f"股池落后：data15 最新一期 {latest}，第六章已核验到 {rebal}（差 {gap} 天）。"
+            f"pools_v5.csv 没换季，重建会把线上页面退回上一期，故拒绝上传")
+
+
 PROBE = "sh000300"                             # 交易日探测器（沪深300）
 BENCH = {"沪深300": "sh000300", "创业板50": "sz399673", "科创50": "sh000688"}
 
@@ -486,6 +520,13 @@ def main():
             "页面完整性门禁未通过，已拒绝上传（线上保持原状）：\n  " + gate
             + "\n  → 多半是 data/page_base.html 模板与线上版式不一致。"
               "先跑 python3 cloud/seed_page_base.py --force 重新拉取线上模板。")
+    if engine == "finchain-v5":
+        lag = pool_lag()
+        if lag:
+            raise SystemExit(
+                "页面内容门禁未通过，已拒绝上传（线上保持原状）：\n  " + lag
+                + "\n  → 换季：把该报告期重建一遍，或先给云端 data15 换季"
+                  "（cloud/fin_season.sh），详见 cloud/README.md。")
     out = run([PY, str(library_skill() / "page" / "import_html.py"), page_html,
                "--node-block-id", PAGE_NODE], timeout=1800)
     line = [l for l in out.splitlines() if "KS_IMPORT_OK" in l]
