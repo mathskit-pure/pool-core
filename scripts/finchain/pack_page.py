@@ -139,9 +139,13 @@ def build_recent(name, daily, pos, n_periods=8):
     posidx = {d: i for i, d in enumerate(pd.to_datetime(pos["dates"]))}
 
     def exec_date(d):
-        """决策日之后的第一个交易日"""
+        """决策日之后的第一个交易日。
+
+        落到行情末端时（T+1 尚未开盘，例如周末/节假日重建），把决策日本身当执行日返回：
+        否则返回 None 会让后面 `series.asof(None)` 直接抛 TypeError，整页打包失败。
+        """
         nxt = trade[trade > d]
-        return nxt[0] if len(nxt) else None
+        return nxt[0] if len(nxt) else d
 
     out = {}
     for combo, key in COMBOS.items():

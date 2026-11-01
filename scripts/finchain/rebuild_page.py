@@ -124,6 +124,35 @@ def stale_mood():
     return ""
 
 
+def stale_pool():
+    """股池是否落后于第六章已核验的调仓期。返回提示语（非空即拒绝上传）。
+
+    典型场景：云端 data15 里的 pools_v5.csv 还停在上一个报告期，
+    而 data/mood_q28.json（随代码入库）已经换到新一期持仓。
+    这时若照常重建并上传，二章会退回上一期、五章却按新一期算，
+    线上页面直接被旧数据覆盖 —— 2026-11-01 本机提前换季时就是靠这道闸门防的。
+    """
+    if not os.path.exists(MOOD_JSON):
+        return ""
+    try:
+        rebal = str(json.load(open(MOOD_JSON, encoding="utf-8"))["meta"]["rebal_date"])
+        latest = str(json.load(open(CONTENT, encoding="utf-8"))["periods"][-1]["asof"])
+    except (OSError, KeyError, ValueError, IndexError):
+        return ""
+    if latest >= rebal:
+        return ""
+    from datetime import date
+    try:
+        gap = (date.fromisoformat(rebal) - date.fromisoformat(latest)).days
+    except ValueError:
+        return ""
+    # 新一期的信息可得日只比调仓日晚 1~3 天；落后超过 10 天说明股池没跟上
+    if gap <= 10:
+        return ""
+    return (f"股池落后：最新一期 {latest}，第六章已核验到 {rebal}（差 {gap} 天）。"
+            f"data15 的 pools_v5.csv 没换季，重建会把线上页面退回上一期，故拒绝上传")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--upload", action="store_true", help="覆写资料库节点（编辑态）")
@@ -175,6 +204,11 @@ def main():
     if not a.upload:
         log("（未指定 --upload，仅保留本地产物）")
         return
+
+    behind = stale_pool()
+    if behind:
+        raise SystemExit("! " + behind + "\n  修复：把该报告期的数据重建一遍（faq_engine_15 → build_pools_v5 → "
+                         "build_pools_v6_ind50 → daily_nav15），或先把 data15 换季再上传。")
 
     skill = library_skill()
     log("上传（覆写编辑态）")
